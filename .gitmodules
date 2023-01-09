@@ -1,0 +1,3 @@
+[submodule "bqat"]
+	path = bqat
+	url = git@gitlab.com:biometix/products/biometric-quality-assessment-tool/bqat-core.git

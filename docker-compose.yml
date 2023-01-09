@@ -1,0 +1,52 @@
+version: '3.9'
+
+volumes:
+  db_mongo:
+
+
+services:
+  redis:
+    image: redis:latest
+    ports:
+      - 6379:6379
+
+  mongo:
+    image: mongo:latest
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: admin
+    volumes:
+      - db_mongo:/data/db
+
+  mongo-express:
+    image: mongo-express:latest
+    ports:
+      - 8081:8081
+    depends_on:
+      - api
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: admin
+
+  api:
+    image: bqat-api
+    build: .
+    shm_size: 8gb
+    ports:
+      - 8848:8000
+    depends_on:
+      - mongo
+      - redis
+    environment:
+      DEBUG_MODE: YES
+      MGO_URL: mongodb://root:admin@mongo:27017/
+      SCAN_DB: dev
+      LOG_DB: log
+      RDS_URL: redis://redis:6379/
+      QUEUE_DB: 10
+    volumes:
+      - ./api:/app/api
+      - ./bqat:/app/bqat
+      - ./data:/app/data

@@ -1,0 +1,22 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+mediapipe = "*"
+deepface = "*"
+image-quality = {git = "https://github.com/ocampor/image-quality"}
+wsq = "*"
+pillow = "*"
+fastapi = "*"
+uvicorn = {extras = ["standard"], version = "*"}
+motor = "*"
+ray = "*"
+redis = "*"
+beanie = "*"
+
+[dev-packages]
+
+[requires]
+python_version = "3.10"
