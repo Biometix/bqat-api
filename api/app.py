@@ -5,7 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from redis import asyncio as aioredis
 
 from api.config import settings
-from api.config.models import CollectionLog, TaskLog
+from api.config.models import CollectionLog, TaskLog, ReportLog
 from api.routes.task import router as bqat_task
 from api.routes.scan import router as bqat_scan
 
@@ -22,7 +22,7 @@ async def startup_db_client():
             print(f"Connect to MongoDB (scan): {app.scan.name}")
         await init_beanie(
             database=app.log,
-            document_models=[TaskLog, CollectionLog]
+            document_models=[TaskLog, CollectionLog, ReportLog]
         )
         print(f"Connect to MongoDB (log): {app.log.name}")
     except Exception as e:

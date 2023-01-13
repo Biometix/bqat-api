@@ -50,4 +50,5 @@ LABEL BQAT.Version=$Version
 # RUN chown -R assessor /app
 # USER assessor
 
-ENTRYPOINT [ "python3.8", "-m", "api" ]
+ENTRYPOINT [ "/bin/bash", "-l", "-c" ]
+CMD [ "python3.8 -m api" ]

@@ -4,6 +4,8 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+opencv-python = "==4.6.0.66"
+opencv-contrib-python = "==4.6.0.66"
 mediapipe = "*"
 deepface = "*"
 image-quality = {git = "https://github.com/ocampor/image-quality"}
@@ -15,6 +17,8 @@ motor = "*"
 ray = "*"
 redis = "*"
 beanie = "*"
+pandas-profiling = "*"
+rich = "*"
 
 [dev-packages]
 

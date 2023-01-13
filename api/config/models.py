@@ -1,7 +1,7 @@
 import os
 from uuid import UUID, uuid4
-from typing import Optional, List
-from enum import IntEnum
+from typing import Optional, List, Union
+from enum import IntEnum, Enum
 
 from datetime import datetime
 from beanie import Document
@@ -79,23 +79,31 @@ class Metadata(BaseModel):
         }
 
 
-class Options(BaseModel):
-    quality: bool = True
-    head: bool = True
-    face: bool = True
-    confidence: float = Field(
-        0.7,
-        title='Confidence Level',
-        description='This is the confidence level of face detection',
-        gt=0,
-        lt=.99
-    )
+class Modality(str, Enum):
+    fingerprint = 'fingerprint'
+    iris = 'iris'
+    face = 'face'
 
-    @validator('confidence')
-    def confidence_level_must_be_legal(cls, v):
-        if v < 0 or v > 1:
-            raise ValueError('confidence value illegal')
-        return v
+
+class Engine(str, Enum):
+    default = 'default'
+
+
+# class Options(BaseModel):
+#     mode: Modality
+#     engine: Engine = Engine.default
+#     source: Union[List, str] = 'default'
+#     target: str = 'png'
+#     quality: bool = True
+#     head: bool = True
+#     face: bool = True
+#     confidence: float = 0.7
+
+#     @validator('confidence')
+#     def confidence_level_must_be_legal(cls, v):
+#         if v < 0 or v > 1:
+#             raise ValueError('confidence value illegal')
+#         return v
 
 
 class Folder(BaseModel):
@@ -134,6 +142,42 @@ class FileList(BaseModel):
         schema_extra = {
             "example": {
                 "files": [
+                    "data/helen/20301003_1.jpg",
+                    "data/helen/20315024_1.jpg",
+                    "data/helen/17349955_1.jpg"
+                ],
+                "collection": "2e7f31ef-cba8-4365-856e-38b0621a6041"
+            }
+        }
+
+
+class ScanTask(BaseModel):
+    modality: Optional[Modality]
+    options: Optional[dict]
+    input: Union[List[str], str] = Field(...)
+    collection: str = Field(default_factory=uuid4)
+
+    @validator('input')
+    def path_must_exist(cls, input):
+        if isinstance(input, str):
+            if not os.path.exists(input):
+                raise ValueError(f"folder '{input}' not exist")
+            if not os.path.isdir(input):
+                raise ValueError(f"path to '{input}' is not a folder")
+            return input
+        elif isinstance(input, List):
+            for v in input:
+                if not os.path.exists(v):
+                    raise ValueError(f"file '{v}' not exist")
+            return input
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "options": {
+                    "engine": "default",
+                },
+                "input": [
                     "data/helen/20301003_1.jpg",
                     "data/helen/20315024_1.jpg",
                     "data/helen/17349955_1.jpg"
@@ -241,10 +285,33 @@ class Status(IntEnum):
     done = 2
 
 
+class ReportLog(Document):
+    collection: UUID
+    options: dict
+
+    class Settings:
+        name = "report"
+        bson_encoders = {
+            UUID: str
+        }
+
+    class Config:
+        schema_extra = {
+            "example": {
+                "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
+                "options": {
+                    "minimal": True,
+                    "downsample": True,
+                    "frac": 0.1
+                },
+            }
+        }
+
+
 class TaskLog(Document):
     tid: UUID = Field(default_factory=uuid4)
     input: List[str]
-    options: Options = Options()
+    options: dict = Field(...)
     collection: UUID = Field(default_factory=uuid4)
     status: Status = Status.new
     finished: List[str] = []
@@ -278,7 +345,7 @@ class TaskLog(Document):
 class EditTaskLog(BaseModel):
     input: Optional[List[str]]
     finished: Optional[List[str]]
-    options: Optional[Options]
+    options: Optional[dict]
     collection: Optional[str]
     status: Optional[Status]
     elapse: Optional[int]
