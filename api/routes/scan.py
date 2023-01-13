@@ -1,89 +1,76 @@
+import os
 import json
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
-from api.config.models import FileList, Folder, Metadata, Options, ScanEdit, TaskLog
-from api.utils import edit_attributes, run_tasks, get_files
+from api.config.models import Metadata, ScanEdit, TaskLog, ScanTask, Modality, ReportLog
+from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options
 
 router = APIRouter()
 
 
 @router.post(
-    "/folder",
-    response_description="Add new scan tasks from a folder",
+    "/",
+    response_description="Add new scan tasks",
     status_code=status.HTTP_201_CREATED
 )
-async def scan_folder(
+async def scan(
     background_tasks: BackgroundTasks,
     request: Request,
-    tasks: Folder = Body(...),
-    face: bool = True,
-    head: bool = True,
-    quality: bool = True,
-    confidence: float = 0.7,
+    modality: Modality,
+    tasks: ScanTask = Body(...),
 ):
-    folder_path = tasks.dict().get("path")
-    if not folder_path:
+    tasks = tasks.dict()
+    if not modality:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"please include folder path in request body",
+            detail=f"please specify biometric modality",
         )
-    files = get_files(folder_path)
-    collection = tasks.dict().get("collection")
+
+    collection = tasks.get("collection")
     if not collection:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"please include target collection of MongoDB in request body",
+            detail=f"please specify target collection of MongoDB in request body",
         )
-    options = Options(face=face, head=head, quality=quality, confidence=confidence)
+
+    if not (options := tasks.get("options")):
+        options = {} 
+    if not (options := check_options(options, modality)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"modality not support",
+        )
+    
+    input = tasks.get("input")
+    if isinstance(input, str):
+        if not os.path.exists(input):
+            raise ValueError(f"folder '{input}' not exist")
+        if not os.path.isdir(input):
+            raise ValueError(f"path to '{input}' is not a folder")
+        if extension := options.get("extension"):
+            files = get_files(input, extension)
+        else:
+            files = get_files(input)
+    elif isinstance(input, list):
+        for v in input:
+            if not os.path.exists(v):
+                raise ValueError(f"file '{v}' not exist")
+        files = input
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"illegal input",
+        )
+
     task_log = TaskLog(collection=collection, input=files, options=options)
     task = await task_log.create()
 
     db = request.app.scan
     log = request.app.log
     queue = request.app.queue
-    background_tasks.add_task(run_tasks, db, log, queue)
-
-    return JSONResponse(
-        status_code=status.HTTP_201_CREATED, content={"tid": str(task.tid)}
-    )
-
-
-@router.post(
-    "/files",
-    response_description="Add new scan task from a list of files",
-    status_code=status.HTTP_201_CREATED
-)
-async def scan_files(
-    background_tasks: BackgroundTasks,
-    request: Request,
-    tasks: FileList = Body(...),
-    face: bool = True,
-    head: bool = True,
-    quality: bool = True,
-    confidence: float = 0.7,
-):
-    files = list(tasks.dict().get("files"))
-    if not files:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"please include file path in request body",
-        )
-    collection = tasks.dict().get("collection")
-    if not collection:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"please include target collection of MongoDB in request body",
-        )
-    options = Options(face=face, head=head, quality=quality, confidence=confidence)
-    task_log = TaskLog(collection=collection, input=files, options=options)
-    task = await task_log.create()
-
-    db = request.app.scan
-    log = request.app.log
-    queue = request.app.queue
-    background_tasks.add_task(run_tasks, db, log, queue)
+    background_tasks.add_task(run_scan_tasks, db, log, queue)
 
     return JSONResponse(
         status_code=status.HTTP_201_CREATED, content={"tid": str(task.tid)}
@@ -91,10 +78,10 @@ async def scan_files(
 
 
 @router.get(
-    "/metadata/all",
-    response_description="All scan metadata retrieved"
+    "/logs",
+    response_description="All scan log retrieved"
 )
-async def get_metadata_all(request: Request) -> list:
+async def get_logs(request: Request) -> list:
     logs = []
     for doc in await request.app.log["dataset"].find().to_list(length=None):
         doc.pop("_id")
@@ -103,10 +90,10 @@ async def get_metadata_all(request: Request) -> list:
 
 
 @router.get(
-    "/metadata/{dataset_id}",
-    response_description="Scan metadata of the dataset retrieved"
+    "/logs/{dataset_id}",
+    response_description="Dataset scan log retrieved"
 )
-async def get_metadata(dataset_id: str, request: Request):
+async def get_log(dataset_id: str, request: Request):
     if (
         doc := await request.app.log["dataset"].find_one({"collection": dataset_id})
     ) is not None:
@@ -115,21 +102,21 @@ async def get_metadata(dataset_id: str, request: Request):
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Scan metadata of [{dataset_id}] not found",
+            detail=f"Scan log of [{dataset_id}] not found",
         )
 
 
 @router.delete(
-    "/metadata/{dataset_id}",
-    response_description="Scan metadata of the dataset deleted"
+    "/logs/{dataset_id}",
+    response_description="Dataset scan log deleted"
 )
-async def delete_metadata(dataset_id: str, request: Request):
+async def delete_log(dataset_id: str, request: Request):
     delete_result = await request.app.log["dataset"].delete_one({"collection": dataset_id})
     if delete_result.deleted_count > 0:
-        return {"info": f"Scan metadata of [{dataset_id}] deleted"}
+        return {"info": f"Scan log of [{dataset_id}] deleted"}
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Scan metadata of [{dataset_id}] not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Scan log of [{dataset_id}] not found"
         )
 
 
@@ -220,6 +207,47 @@ async def delete_one(dataset_id: str, scan_id: str, request: Request):
 
 
 @router.post(
+    "/{dataset_id}/report",
+    response_description="Report generation task added",
+    status_code=status.HTTP_201_CREATED
+)
+async def generate_report(
+    background_tasks: BackgroundTasks,
+    dataset_id: str,
+    request: Request,
+    options: dict = Body(...),
+):
+    report_log = ReportLog(collection=dataset_id, options=options)
+    task = await report_log.create()
+
+    scan = request.app.scan
+    log = request.app.log
+    background_tasks.add_task(run_report_tasks, scan, log)
+    
+    return JSONResponse(
+        status_code=status.HTTP_201_CREATED, content={"report task": str(task.collection)}
+    )
+
+
+@router.get(
+    "/{dataset_id}/report",
+    response_description="Report retrieved",
+    response_class=HTMLResponse,
+)
+async def get_report(dataset_id: str, request: Request):
+    if (
+        doc := await request.app.log["report"].find_one({"collection": dataset_id})
+    ) is not None:
+        html_content = doc["html"]
+        return HTMLResponse(content=html_content, status_code=200)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report of [{dataset_id}] not found",
+        )
+
+
+@router.post(
     "/{dataset_id}/rerun/{scan_id}",
     response_description="Image rescanned",
     status_code=status.HTTP_202_ACCEPTED
@@ -244,7 +272,7 @@ async def rescan_one(
         options = Options(face=face, head=head, quality=quality, confidence=confidence)
         task_log = TaskLog(collection=dataset_id, input=[file], options=options)
         task = await task_log.create()
-        background_tasks.add_task(run_tasks, db, log, queue)
+        background_tasks.add_task(run_scan_tasks, db, log, queue)
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED, content={"tid": str(task.tid)}
         )
@@ -321,7 +349,7 @@ async def resume_queue(request: Request, background_tasks: BackgroundTasks):
     log = request.app.log
     queue = request.app.queue
     if len(await log["task"].find({"status": {"$lt": 2}}).to_list(length=None)) > 0:
-        background_tasks.add_task(run_tasks, db, log, queue)
+        background_tasks.add_task(run_scan_tasks, db, log, queue)
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED, content={"message": "Successful, task queue resumed."}
         )
