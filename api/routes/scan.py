@@ -1,11 +1,13 @@
 import os
 import json
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, status, File, UploadFile
 from fastapi.responses import JSONResponse, HTMLResponse
 
 from api.config.models import Metadata, ScanEdit, TaskLog, ScanTask, Modality, ReportLog
-from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options
+from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options, retrieve_report, remove_report
+
+from typing import Union
 
 router = APIRouter()
 
@@ -75,6 +77,20 @@ async def scan(
     return JSONResponse(
         status_code=status.HTTP_201_CREATED, content={"tid": str(task.tid)}
     )
+
+
+# @router.post(
+#     "/uploaded",
+#     response_description="Add new scan tasks from uploaded file",
+#     status_code=status.HTTP_201_CREATED
+# )
+# async def scan_uploaded(
+#     file: UploadFile,
+#     background_tasks: BackgroundTasks,
+#     request: Request,
+#     modality: Modality,
+#     tasks: ScanTask = Body(...),
+# ):
 
 
 @router.get(
@@ -215,9 +231,10 @@ async def generate_report(
     background_tasks: BackgroundTasks,
     dataset_id: str,
     request: Request,
-    options: dict = Body(...),
+    report_log: Union[ReportLog, None] = None 
 ):
-    report_log = ReportLog(collection=dataset_id, options=options)
+    if not report_log:
+        report_log = ReportLog(collection=dataset_id)
     task = await report_log.create()
 
     scan = request.app.scan
@@ -238,12 +255,28 @@ async def get_report(dataset_id: str, request: Request):
     if (
         doc := await request.app.log["report"].find_one({"collection": dataset_id})
     ) is not None:
-        html_content = doc["html"]
+        file_id = doc["file_id"]
+        html_content = await retrieve_report(file_id, request.app.log)
         return HTMLResponse(content=html_content, status_code=200)
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Report of [{dataset_id}] not found",
+        )
+
+
+@router.delete(
+    "/{dataset_id}/report",
+    response_description="Dataset report deleted",
+)
+async def delete_report(dataset_id: str, request: Request):
+    doc = await request.app.log["report"].find_one_and_delete({"collection": dataset_id})
+    if doc:
+        await remove_report(doc["file_id"], request.app.log)
+        return {"info": f"Report of [{dataset_id}] deleted"}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Report of [{dataset_id}] not found"
         )
 
 

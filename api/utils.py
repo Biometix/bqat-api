@@ -9,7 +9,7 @@ from pandas_profiling import ProfileReport
 
 import ray
 from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn
-from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorDatabase
 from redis.asyncio.client import Redis
 
 from api.config.models import CollectionLog, Status, TaskQueue
@@ -30,7 +30,7 @@ def scan_task(path, options):
 @ray.remote
 def report_task(data, options):
     try:
-        report = get_report(data, **options)
+        report = generate_report(data, **options)
     except Exception as e:
         print(f">>>> Report generation failed: {str(e)}")
         log = {"options": options, "error": str(e)}
@@ -243,20 +243,32 @@ async def run_report_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase
         for doc in await scan[dataset_id].find().to_list(length=None):
             doc.pop("_id")
             data.append(doc)
-        report = report_task.remote(data, task.get("options"))
+        options = {
+            "minimal": task.get("minimal"),
+            "downsample": task.get("downsample")
+        }
+        report = report_task.remote(data, options)
         html_content = ray.get(report)
+        fs = AsyncIOMotorGridFSBucket(log)
+        file_id = await fs.upload_from_stream(
+            f"report_{dataset_id}",
+            html_content.encode(),
+            metadata={"contentType": "text/plain"}
+        )
         await log["report"].find_one_and_update(
-                {"collection": dataset_id},
-                {
-                    "$set": {"html": html_content}
+            {"collection": dataset_id},
+            {
+                "$set": {
+                    "file_id": file_id,
+                    "filename": f"report_{dataset_id}"
                 }
-            )
+            }
+        )
         task_timer = time.time() - task_timer
         t_min, t_sec = divmod(task_timer, 60)
         t_hr, t_min = divmod(t_min, 60)
         print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
     print(">>> Finished <<<")
-
 
 
 def get_files(folder, ext=("jpg", "jpeg", "png", "bmp", "wsq", "jp2")) -> list:
@@ -337,25 +349,37 @@ def check_options(options, modality):
     return options
 
 
-def get_report(data, **options):
+def generate_report(data, **options):
     temp="report.html"
     df = pd.DataFrame.from_dict(data)
     # df.set_index("file", inplace=True)
     # df = df.drop(columns=['file'])
     if options.get("downsample"):
-        df = df.sample(frac=options.get("frac", 0.05))
-    report = ProfileReport(
+        df = df.sample(frac=options.get("downsample", 0.05))
+    ProfileReport(
         df,
         title="Biometric Quality Report",
         explorative=True,
         minimal=options.get("minimal", True),
         correlations={"cramers": {"calculate": False}},
         html={"style": {"theme": "flatly"}},
-    )
-    report.to_file(temp)
+    ).to_file(temp)
 
     with open(temp, 'r') as f:
         html = f.read()
     os.remove(temp)
 
     return html
+
+
+async def retrieve_report(file_id, db):
+    fs = AsyncIOMotorGridFSBucket(db)
+    file = open('myfile','wb+')
+    await fs.download_to_stream(file_id, file)
+    file.seek(0)
+    return file.read()
+
+
+async def remove_report(file_id, db):
+    fs = AsyncIOMotorGridFSBucket(db)
+    await fs.delete(file_id)

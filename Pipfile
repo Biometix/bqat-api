@@ -19,6 +19,7 @@ redis = "*"
 beanie = "*"
 pandas-profiling = "*"
 rich = "*"
+python-multipart = "*"
 
 [dev-packages]
 

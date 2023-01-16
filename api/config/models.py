@@ -286,8 +286,9 @@ class Status(IntEnum):
 
 
 class ReportLog(Document):
-    collection: UUID
-    options: dict
+    collection: Union[UUID, None]
+    minimal: Union[bool, None] = True
+    downsample: Union[bool, None] = False
 
     class Settings:
         name = "report"
@@ -298,12 +299,8 @@ class ReportLog(Document):
     class Config:
         schema_extra = {
             "example": {
-                "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
-                "options": {
-                    "minimal": True,
-                    "downsample": True,
-                    "frac": 0.1
-                },
+                "minimal": True,
+                "downsample": 0.1,
             }
         }
 
