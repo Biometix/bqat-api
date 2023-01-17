@@ -1,6 +1,6 @@
 import os
 from uuid import UUID, uuid4
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Any
 from enum import IntEnum, Enum
 
 from datetime import datetime
@@ -80,9 +80,10 @@ class Metadata(BaseModel):
 
 
 class Modality(str, Enum):
-    fingerprint = 'fingerprint'
-    iris = 'iris'
     face = 'face'
+    iris = 'iris'
+    finger = 'finger'
+    fingerprint = 'fingerprint'
 
 
 class Engine(str, Enum):
@@ -154,7 +155,7 @@ class FileList(BaseModel):
 class ScanTask(BaseModel):
     modality: Optional[Modality]
     options: Optional[dict]
-    input: Union[List[str], str] = Field(...)
+    input: Union[List[str], str, None] = Field(...)
     collection: str = Field(default_factory=uuid4)
 
     @validator('input')
@@ -289,9 +290,11 @@ class ReportLog(Document):
     collection: Union[UUID, None]
     minimal: Union[bool, None] = True
     downsample: Union[bool, None] = False
+    file_id: Union[Any, None] = None
+    filename: Union[str, None] = None
 
     class Settings:
-        name = "report"
+        name = "reports"
         bson_encoders = {
             UUID: str
         }
@@ -307,15 +310,15 @@ class ReportLog(Document):
 
 class TaskLog(Document):
     tid: UUID = Field(default_factory=uuid4)
-    input: List[str]
     options: dict = Field(...)
     collection: UUID = Field(default_factory=uuid4)
     status: Status = Status.new
-    finished: List[str] = []
+    input: int = Field(...)
+    finished: int = 0
     elapse: int = 0
 
     class Settings:
-        name = "task"
+        name = "tasks"
         bson_encoders = {
             UUID: str
         }
@@ -323,11 +326,7 @@ class TaskLog(Document):
     class Config:
         schema_extra = {
             "example": {
-                "input": [
-                    "data/helen/20301003_1.jpg",
-                    "data/helen/20315024_1.jpg",
-                    "data/helen/17349955_1.jpg"
-                ],
+                "input": 1000,
                 "options": {
                     "quality": False,
                     "head": True,
@@ -375,22 +374,37 @@ class CollectionLog(Document):
     collection: str
     created: datetime = Field(default_factory=datetime.utcnow)
     modified: datetime = created
-    samples: List[str] = []
+    samples: int = 0
 
     class Settings:
-        name = "dataset"
+        name = "datasets"
 
     class Config:
         schema_extra = {
             "example": {
                 "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
-                "samples": [
-                    "data/helen/20301003_1.jpg",
-                    "data/helen/20315024_1.jpg",
-                    "data/helen/17349955_1.jpg"
-                ]
+                "samples": 1000
             }
         }
+
+
+class SampleLog(Document):
+    tid: UUID
+    collection: str
+    path: str
+    status: Status = Status.new
+
+    class Settings:
+        name = "samples"
+        bson_encoders = {
+            UUID: str
+        }
+    
+    @validator('path')
+    def path_must_exist(cls, path):
+        if not os.path.exists(path):
+            raise ValueError(f"'{path}' not existed")
+        return path
 
 
 class EditCollectionLog(BaseModel):
