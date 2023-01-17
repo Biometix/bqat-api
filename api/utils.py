@@ -1,5 +1,6 @@
 import glob
 import os
+import shutil
 import hashlib
 import json
 import time
@@ -39,7 +40,7 @@ def report_task(data, options):
 
 
 async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, queue: Redis) -> None:
-    tasks = await log["task"].find({"status": {"$lt": 2}}).to_list(length=None)
+    tasks = await log["tasks"].find({"status": {"$lt": 2}}).to_list(length=None)
     for task in tasks:
         tid = str(task.get("tid"))
         await queue.lpush("task_queue", tid)
@@ -48,9 +49,7 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
                 tid,
                 json.dumps(
                     TaskQueue(
-                        total=len(task.get("input")),
-                        done=len(task.get("finished")),
-                        eta=0
+                        total=task.get("input")
                     ).dict()
                 )
             )
@@ -61,19 +60,18 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
     
     while await queue.llen("task_queue") > 0:
         tid = (await queue.lrange("task_queue", -1, -1))[0]
-        task = await log["task"].find_one({"tid": tid})
+        task = await log["tasks"].find_one({"tid": tid})
         options = task.get("options")
         collection = task.get("collection")
-        all_files = set(task.get("input"))
-        finished = set(task.get("finished"))
-        pending = all_files.difference(finished)
+        pending = [sample["path"] for sample in await log["samples"].find({"tid": tid, "status": 0}).to_list(length=None)]
+
         if task.get("status") == Status.new:
-            if not await log["dataset"].find_one({"collection": collection}):
+            if not await log["datasets"].find_one({"collection": collection}):
                 await CollectionLog(
                     collection=collection
                 ).create()
         
-        task = await log["task"].find_one_and_update(
+        task = await log["tasks"].find_one_and_update(
             {"tid": tid},
             {"$set": {"status": 1}}
         )
@@ -100,139 +98,74 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
                 results = ray.get(ready)
                 await scan[collection].insert_many(results)
                 files = [entry["file"] for entry in results]
-                task = await log["task"].find_one_and_update(
-                    {"tid": tid},
+                task = await log["tasks"].find_one_and_update(
+                    { "tid": tid },
                     {
-                        "$inc": {"elapse": scan_timer},
-                        "$addToSet": {"finished": {"$each": files}}
+                        "$inc": {
+                            "elapse": scan_timer,
+                            "finished": 1 
+                        }
+                        # "$addToSet": {"finished": {"$each": files}}
                     }
                 )
-                await log["dataset"].find_one_and_update(
-                    {"collection": collection},
+                await log["datasets"].find_one_and_update(
+                    { "collection": collection },
                     {
-                        "$set": {"modified": datetime.now()},
-                        "$addToSet": {"samples": {"$each": files}}
+                        # "$set": {"modified": datetime.now()},
+                        "$currentDate": { "modified": True },
+                        "$inc": { "samples": 1 }
                     }
                 )
+                for file in files:
+                    await log["samples"].find_one_and_update(
+                        {
+                            "tid": tid,
+                            "path": file
+                        },
+                        {
+                            "$set": { "status": 2 }
+                        }
+                    )
                 elapse = task.get("elapse") + scan_timer
                 status = json.loads(await queue.get(tid))
                 status["done"] += len(files)
-                eta = elapse/status["done"]*(status["total"] - status["done"])
+                throughput = status["done"]/elapse
+                eta = (status["total"] - status["done"])/throughput
                 status["eta"] = eta
                 t_min, t_sec = divmod(eta, 60)
                 t_hr, t_min = divmod(t_min, 60)
                 print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                print(f">> Throughput: {throughput:.2f} items/s\n")
                 await queue.set(tid, json.dumps(status))
                 tasks = not_ready
                 if not len(task):
                     break
     
-        task = await log["task"].find_one({"tid": tid})
-        if task and (len(task.get("input")) <= len(task.get("finished"))):
-            await log["task"].find_one_and_update(
+        task = await log["tasks"].find_one({"tid": tid})
+        if task and (task.get("input") <= task.get("finished")):
+            await log["tasks"].find_one_and_update(
                 {"tid": tid},
                 {"$set": {"status": 2}}
             )
+            if task["options"].get("uploaded"):
+                shutil.rmtree("data/tmp/")
             await queue.rpop("task_queue")
             await queue.delete(tid)
+            await log["samples"].delete_many({"tid": tid, "status": 2})
 
     task_timer = time.time() - task_timer
     t_min, t_sec = divmod(task_timer, 60)
     t_hr, t_min = divmod(t_min, 60)
     print(f">> File count: {file_count}")
-    print(f">> Throughput: {(task_timer/file_count):.2f}s/item")
+    print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
     print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
     print(">>> Finished <<<")
 
 
-# async def run_scan_tasks(db: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, queue: Redis) -> None:
-#     tasks = await log["task"].find({"status": {"$lt": 2}}).to_list(length=None)
-#     for task in tasks:
-#         tid = str(task.get("tid"))
-#         await queue.lpush("task_queue", tid)
-#         if not await queue.exists(tid):
-#             await queue.set(
-#                 tid,
-#                 json.dumps(
-#                     TaskQueue(
-#                         total=len(task.get("input")),
-#                         done=len(task.get("finished")),
-#                         eta=0
-#                     ).dict()
-#                 )
-#             )
-
-#     while await queue.llen("task_queue") > 0:
-#         tid = (await queue.lrange("task_queue", -1, -1))[0]
-#         task = await log["task"].find_one({"tid": tid})
-#         options = task.get("options")
-#         collection = task.get("collection")
-#         all_files = set(task.get("input"))
-#         finished = set(task.get("finished"))
-#         pending = all_files.difference(finished)
-#         [await queue.lpush("scan_queue", file) for file in pending]
-#         if task.get("status") == Status.new:
-#             if not await log["dataset"].find_one({"collection": collection}):
-#                 await CollectionLog(
-#                     collection=collection
-#                 ).create()
-#         file_count = 0
-#         task_timer = time.time()
-#         while await queue.llen("scan_queue") > 0:
-#             file = await queue.rpop("scan_queue")
-#             file_count += 1
-#             print(f"=== File #{file_count} ===")
-#             print(f">> Input: {file}")
-#             scan_timer = time.time()
-#             scan = scan_task.remote(file, options)
-#             result = ray.get(scan)
-#             # ray.shutdown()
-#             print(f">> Done!\n")
-#             scan_timer = time.time() - scan_timer
-#             await db[collection].insert_one(result)
-#             task = await log["task"].find_one_and_update(
-#                 {"tid": tid},
-#                 {
-#                     "$inc": {"elapse": scan_timer},
-#                     "$set": {"status": 1},
-#                     "$push": {"finished": file}
-#                 }
-#             )
-#             await log["dataset"].find_one_and_update(
-#                 {"collection": collection},
-#                 {
-#                     "$set": {"modified": datetime.now()},
-#                     "$push": {"samples": file}
-#                 }
-#             )
-#             elapse = task.get("elapse") + scan_timer
-#             status = json.loads(await queue.get(tid))
-#             status["done"] += 1
-#             status["eta"] = elapse/status["done"]*(status["total"] - status["done"])
-#             await queue.set(tid, json.dumps(status))
-
-#         task = await log["task"].find_one({"tid": tid})
-#         if task and (len(task.get("input")) <= len(task.get("finished"))):
-#             await log["task"].find_one_and_update(
-#                 {"tid": tid},
-#                 {"$set": {"status": 2}}
-#             )
-#             await queue.rpop("task_queue")
-#             await queue.delete(tid)
-
-#         task_timer = time.time() - task_timer
-#         t_min, t_sec = divmod(task_timer, 60)
-#         t_hr, t_min = divmod(t_min, 60)
-#         print(f">> File count: {file_count}")
-#         print(f">> Throughput: {(task_timer/file_count):.2f}s/item")
-#         print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
-#         print(">>> Finished <<<")
-
-
 async def run_report_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase) -> None:
     tasks = []
-    for task in await log["report"].find().to_list(length=None):
-        if not task.get("html"):
+    for task in await log["reports"].find().to_list(length=None):
+        if not task.get("file_id"):
             tasks.append(task)
 
     for task in tasks:
@@ -255,12 +188,13 @@ async def run_report_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase
             html_content.encode(),
             metadata={"contentType": "text/plain"}
         )
-        await log["report"].find_one_and_update(
-            {"collection": dataset_id},
+        filename = f"report_{dataset_id}_minimal" if task.get("minimal") else f"report_{dataset_id}"
+        await log["reports"].find_one_and_update(
+            {"_id": task["_id"]},
             {
                 "$set": {
                     "file_id": file_id,
-                    "filename": f"report_{dataset_id}"
+                    "filename": filename
                 }
             }
         )
@@ -360,7 +294,7 @@ def generate_report(data, **options):
         df,
         title="Biometric Quality Report",
         explorative=True,
-        minimal=options.get("minimal", True),
+        minimal=options.get("minimal", False),
         correlations={"cramers": {"calculate": False}},
         html={"style": {"theme": "flatly"}},
     ).to_file(temp)
