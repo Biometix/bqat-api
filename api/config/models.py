@@ -288,7 +288,7 @@ class Status(IntEnum):
 
 class ReportLog(Document):
     collection: Union[UUID, None]
-    minimal: Union[bool, None] = True
+    minimal: Union[bool, None] = False
     downsample: Union[bool, None] = False
     file_id: Union[Any, None] = None
     filename: Union[str, None] = None

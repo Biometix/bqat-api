@@ -86,26 +86,34 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
                 if p.finished:
                     break
 
+        step = 100
+        counter = 0
         with Progress(
             SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
         ) as p:
             task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
             while not p.finished:
                 scan_timer = time.time()
-                ready, not_ready = ray.wait(tasks, timeout=5)
-                scan_timer = time.time() - scan_timer
-                p.update(task_progress, advance=len(ready))
-                results = ray.get(ready)
+                if len(tasks) < step:
+                    ready = tasks
+                    results = ray.get(tasks)
+                    not_ready = 0
+                else:
+                    ready, not_ready = ray.wait(tasks, num_returns=step, timeout=3)
+                    results = ray.get(ready)
+                if not results: break
+                counter += len(ready)
                 await scan[collection].insert_many(results)
                 files = [entry["file"] for entry in results]
+                scan_timer = time.time() - scan_timer
+                p.update(task_progress, advance=len(files))
                 task = await log["tasks"].find_one_and_update(
                     { "tid": tid },
                     {
                         "$inc": {
                             "elapse": scan_timer,
-                            "finished": 1 
+                            "finished": len(files) 
                         }
-                        # "$addToSet": {"finished": {"$each": files}}
                     }
                 )
                 await log["datasets"].find_one_and_update(
@@ -113,19 +121,19 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
                     {
                         # "$set": {"modified": datetime.now()},
                         "$currentDate": { "modified": True },
-                        "$inc": { "samples": 1 }
+                        "$inc": { "samples": len(files) }
                     }
                 )
-                for file in files:
-                    await log["samples"].find_one_and_update(
-                        {
-                            "tid": tid,
-                            "path": file
-                        },
-                        {
-                            "$set": { "status": 2 }
-                        }
-                    )
+                # for file in files:
+                #     await log["samples"].find_one_and_update(
+                #         {
+                #             "tid": tid,
+                #             "path": file
+                #         },
+                #         {
+                #             "$set": { "status": 2 }
+                #         }
+                #     )
                 elapse = task.get("elapse") + scan_timer
                 status = json.loads(await queue.get(tid))
                 status["done"] += len(files)
@@ -134,12 +142,11 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
                 status["eta"] = eta
                 t_min, t_sec = divmod(eta, 60)
                 t_hr, t_min = divmod(t_min, 60)
+                print(f">> Finished: {counter}")
                 print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
                 print(f">> Throughput: {throughput:.2f} items/s\n")
                 await queue.set(tid, json.dumps(status))
                 tasks = not_ready
-                if not len(task):
-                    break
     
         task = await log["tasks"].find_one({"tid": tid})
         if task and (task.get("input") <= task.get("finished")):
@@ -151,7 +158,7 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
                 shutil.rmtree("data/tmp/")
             await queue.rpop("task_queue")
             await queue.delete(tid)
-            await log["samples"].delete_many({"tid": tid, "status": 2})
+            await log["samples"].delete_many({"tid": tid})
 
     task_timer = time.time() - task_timer
     t_min, t_sec = divmod(task_timer, 60)
