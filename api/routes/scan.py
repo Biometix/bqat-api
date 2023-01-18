@@ -5,9 +5,9 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, st
 from fastapi.responses import JSONResponse, HTMLResponse
 
 from api.config.models import ScanEdit, TaskLog, ScanTask, Modality, ReportLog, SampleLog
-from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options, retrieve_report, remove_report
+from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options, retrieve_report, remove_report, get_info
 
-from typing import Union, List
+from typing import List
 from beanie.odm.operators.update.general import Set
 import uuid
 
@@ -467,4 +467,12 @@ async def clear_queue(request: Request):
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={"message": "Task queue cleared"}
+    )
+
+
+@router.get("/info", response_description="BQAT backend info retrieved")
+async def info():
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=get_info()
     )

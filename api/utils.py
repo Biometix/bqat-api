@@ -14,7 +14,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorDatabase
 from redis.asyncio.client import Redis
 
 from api.config.models import CollectionLog, Status, TaskQueue
-from bqat.bqat_core import scan
+from bqat.bqat_core import scan, __version__, __name__
 
 
 @ray.remote
@@ -303,7 +303,7 @@ def generate_report(data, **options):
         explorative=True,
         minimal=options.get("minimal", False),
         correlations={"cramers": {"calculate": False}},
-        html={"style": {"theme": "flatly"}},
+        html={"navbar_show": True, "style": {"theme": "united"}},
     ).to_file(temp)
 
     with open(temp, 'r') as f:
@@ -324,3 +324,10 @@ async def retrieve_report(file_id, db):
 async def remove_report(file_id, db):
     fs = AsyncIOMotorGridFSBucket(db)
     await fs.delete(file_id)
+
+
+def get_info():
+    return {
+        "backend": __name__,
+        "version": __version__
+    }
