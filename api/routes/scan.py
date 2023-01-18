@@ -1,13 +1,13 @@
 import os
 import json
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, status, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, status, UploadFile
 from fastapi.responses import JSONResponse, HTMLResponse
 
-from api.config.models import Metadata, ScanEdit, TaskLog, ScanTask, Modality, ReportLog, SampleLog
-from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options, retrieve_report, remove_report
+from api.config.models import ScanEdit, TaskLog, ScanTask, Modality, ReportLog, SampleLog
+from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options, retrieve_report, remove_report, get_info
 
-from typing import Union, List
+from typing import List
 from beanie.odm.operators.update.general import Set
 import uuid
 
@@ -272,7 +272,7 @@ async def delete_one(dataset_id: str, scan_id: str, request: Request):
 
 
 @router.post(
-    "/{dataset_id}/report",
+    "/{dataset_id}/report/generate",
     response_description="Report generation task added",
     status_code=status.HTTP_202_ACCEPTED
 )
@@ -280,7 +280,7 @@ async def generate_report(
     background_tasks: BackgroundTasks,
     dataset_id: str,
     request: Request,
-    options: Union[dict, None] = None
+    options: dict = {}
 ):
     found = await ReportLog.find_one(ReportLog.collection == dataset_id)
     await ReportLog.find_one(ReportLog.collection == dataset_id).upsert(
@@ -427,32 +427,32 @@ async def get_status(request: Request):
         )
 
 
-@router.post("/pause", response_description="Task queue Paused")
-async def pause_queue(request: Request):
-    queue = request.app.queue
-    await queue.delete("task_queue")
-    await queue.delete("scan_queue")
-    return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED, content={"message": "Successful, task queue paused."}
-    )
+# @router.post("/pause", response_description="Task queue Paused")
+# async def pause_queue(request: Request):
+#     queue = request.app.queue
+#     await queue.delete("task_queue")
+#     await queue.delete("scan_queue")
+#     return JSONResponse(
+#         status_code=status.HTTP_202_ACCEPTED, content={"message": "Successful, task queue paused."}
+#     )
 
 
-@router.post("/resume", response_description="Task queue resumed")
-async def resume_queue(request: Request, background_tasks: BackgroundTasks):
-    if len(await request.app.log["tasks"].find({"status": {"$lt": 2}}).to_list(length=None)) > 0:
-        background_tasks.add_task(
-            run_scan_tasks,
-            request.app.scan,
-            request.app.log,
-            request.app.queue
-        )
-        return JSONResponse(
-            status_code=status.HTTP_202_ACCEPTED, content={"message": "Successful, task queue resumed."}
-        )
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Task queue is empty"
-        )
+# @router.post("/resume", response_description="Task queue resumed")
+# async def resume_queue(request: Request, background_tasks: BackgroundTasks):
+#     if len(await request.app.log["tasks"].find({"status": {"$lt": 2}}).to_list(length=None)) > 0:
+#         background_tasks.add_task(
+#             run_scan_tasks,
+#             request.app.scan,
+#             request.app.log,
+#             request.app.queue
+#         )
+#         return JSONResponse(
+#             status_code=status.HTTP_202_ACCEPTED, content={"message": "Successful, task queue resumed."}
+#         )
+#     else:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND, detail="Task queue is empty"
+#         )
 
 
 @router.post("/clear", response_description="Task queue stopped and cleared")
@@ -467,4 +467,12 @@ async def clear_queue(request: Request):
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={"message": "Task queue cleared"}
+    )
+
+
+@router.get("/info", response_description="BQAT backend info retrieved")
+async def info():
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content=get_info()
     )

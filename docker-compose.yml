@@ -30,7 +30,7 @@ services:
       ME_CONFIG_MONGODB_ADMINUSERNAME: root
       ME_CONFIG_MONGODB_ADMINPASSWORD: admin
 
-  api:
+  server:
     image: bqat-api
     build: .
     shm_size: 8gb
