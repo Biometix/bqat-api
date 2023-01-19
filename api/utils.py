@@ -5,6 +5,7 @@ import hashlib
 import json
 import time
 from datetime import datetime
+import hashlib
 import pandas as pd
 from pandas_profiling import ProfileReport
 
@@ -21,6 +22,7 @@ from bqat.bqat_core import scan, __version__, __name__
 def scan_task(path, options):
     try:
         result = scan(path, **options)
+        result.update({"tag": get_tag(result["file"])})
     except Exception as e:
         print(f">>>> File scan error: {str(e)}")
         log = {"file": path, "error": str(e)}
@@ -166,6 +168,7 @@ async def run_scan_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, 
     print(f">> File count: {file_count}")
     print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
     print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+    print(f">> Collection: {collection}")
     print(">>> Finished <<<")
 
 
@@ -331,3 +334,8 @@ def get_info():
         "backend": __name__,
         "version": __version__
     }
+
+def get_tag(identifier):
+    tag = hashlib.sha1()
+    tag.update(identifier.encode())
+    return tag.hexdigest()

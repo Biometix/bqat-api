@@ -7,7 +7,6 @@ name = "pypi"
 opencv-python = "==4.6.0.66"
 opencv-contrib-python = "==4.6.0.66"
 mediapipe = "*"
-deepface = "*"
 image-quality = {git = "https://github.com/ocampor/image-quality"}
 wsq = "*"
 pillow = "*"
