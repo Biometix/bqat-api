@@ -212,10 +212,10 @@ async def delete_all(dataset_id: str, request: Request):
 )
 async def retrieve_one(dataset_id: str, scan_id: str, request: Request):
     if (
-        doc := await request.app.scan[dataset_id].find_one({"uuid": scan_id})
+        doc := await request.app.scan[dataset_id].find_one({"tag": scan_id})
     ) is not None:
-        profile = doc.pop("_id")
-        return profile
+        doc.pop("_id")
+        return doc
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -223,38 +223,38 @@ async def retrieve_one(dataset_id: str, scan_id: str, request: Request):
         )
 
 
-@router.put(
-    "/{dataset_id}/profiles/{scan_id}",
-    response_description="Image profile updated"
-)
-async def edit_one(
-    dataset_id: str, scan_id: str, request: Request, edit: ScanEdit = Body(...)
-):
-    if (
-        doc := await request.app.scan[dataset_id].find_one({"uuid": scan_id})
-    ) is not None:
-        doc.pop("_id")
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Image profile [{scan_id}] not found",
-        )
-    attr = edit_attributes(doc, {k: v for k, v in edit.dict().items()})
-    if attr:
-        update_result = await request.app.scan[dataset_id].update_one(
-            {"uuid": scan_id}, {"$set": attr}
-        )
-        if update_result.modified_count > 0:
-            return {"info": f"Image profile [{scan_id}] edited"}
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Image profile [{scan_id}] not found",
-            )
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Bad attributes passed"
-        )
+# @router.put(
+#     "/{dataset_id}/profiles/{scan_id}",
+#     response_description="Image profile updated"
+# )
+# async def edit_one(
+#     dataset_id: str, scan_id: str, request: Request, edit: ScanEdit = Body(...)
+# ):
+#     if (
+#         doc := await request.app.scan[dataset_id].find_one({"tag": scan_id})
+#     ) is not None:
+#         doc.pop("_id")
+#     else:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail=f"Image profile [{scan_id}] not found",
+#         )
+#     attr = edit_attributes(doc, {k: v for k, v in edit.dict().items()})
+#     if attr:
+#         update_result = await request.app.scan[dataset_id].update_one(
+#             {"tag": scan_id}, {"$set": attr}
+#         )
+#         if update_result.modified_count > 0:
+#             return {"info": f"Image profile [{scan_id}] edited"}
+#         else:
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND,
+#                 detail=f"Image profile [{scan_id}] not found",
+#             )
+#     else:
+#         raise HTTPException(
+#             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Bad attributes passed"
+#         )
 
 
 @router.delete(
@@ -262,7 +262,7 @@ async def edit_one(
     response_description="Image profile deleted",
 )
 async def delete_one(dataset_id: str, scan_id: str, request: Request):
-    delete_result = await request.app.scan[dataset_id].delete_one({"uuid": scan_id})
+    delete_result = await request.app.scan[dataset_id].delete_one({"tag": scan_id})
     if delete_result.deleted_count > 0:
         return {"info": f"Image profile [{scan_id}] deleted"}
     else:

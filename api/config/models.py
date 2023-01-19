@@ -328,10 +328,9 @@ class TaskLog(Document):
             "example": {
                 "input": 1000,
                 "options": {
-                    "quality": False,
-                    "head": True,
-                    "face": True,
-                    "confidence": 0.6
+                    "engine": "default",
+                    "mode": "face",
+                    "confidence": 0.7
                 },
                 "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
             }
@@ -358,10 +357,9 @@ class EditTaskLog(BaseModel):
                     "data/input/109172267_1.jpg"
                 ],
                 "options": {
-                    "quality": False,
-                    "head": True,
-                    "face": True,
-                    "confidence": 0.6
+                    "engine": "default",
+                    "mode": "face",
+                    "confidence": 0.7
                 },
                 "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
                 "status": 1,
