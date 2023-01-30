@@ -82,7 +82,6 @@ class Metadata(BaseModel):
 class Modality(str, Enum):
     face = 'face'
     iris = 'iris'
-    finger = 'finger'
     fingerprint = 'fingerprint'
 
 

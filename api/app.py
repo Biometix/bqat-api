@@ -4,12 +4,13 @@ from fastapi import FastAPI
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import asyncio as aioredis
 
-from api.config import settings
+from api.config import Settings
 from api.config.models import CollectionLog, TaskLog, ReportLog, SampleLog
 from api.routes.task import router as bqat_task
 from api.routes.scan import router as bqat_scan
 
 app = FastAPI()
+settings = Settings()
 
 
 @app.on_event("startup")
@@ -43,7 +44,7 @@ async def startup_db_client():
 @app.on_event("shutdown")
 async def shutdown_db_client():
     app.mongodb_client.close()
-    app.queue.close()
+    await app.queue.close()
 
 
 app.include_router(bqat_scan, tags=["scan"], prefix="/scan")

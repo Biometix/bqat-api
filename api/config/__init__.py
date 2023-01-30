@@ -2,7 +2,7 @@ from pydantic import BaseSettings
 
 
 class CommonSettings(BaseSettings):
-    APP_NAME: str = "PX-PRUNE"
+    APP_NAME: str = "BQAT"
     DEBUG_MODE: bool = False
 
 
@@ -21,6 +21,3 @@ class DatabaseSettings(BaseSettings):
 
 class Settings(CommonSettings, ServerSettings, DatabaseSettings):
     pass
-
-
-settings = Settings()

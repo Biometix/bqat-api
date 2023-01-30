@@ -8,6 +8,8 @@ from datetime import datetime
 import hashlib
 import pandas as pd
 from pandas_profiling import ProfileReport
+import subprocess
+from io import StringIO
 
 import ray
 from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn
@@ -213,6 +215,11 @@ async def run_report_tasks(scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase
         t_hr, t_min = divmod(t_min, 60)
         print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
     print(">>> Finished <<<")
+
+
+async def run_test_tasks() -> str:
+    out = subprocess.run(["python3.8", "-m", "pytest", "tests", "-v"], capture_output=True)
+    return out.stdout
 
 
 def get_files(folder, ext=("jpg", "jpeg", "png", "bmp", "wsq", "jp2")) -> list:

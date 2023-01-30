@@ -19,6 +19,7 @@ beanie = "*"
 pandas-profiling = "*"
 rich = "*"
 python-multipart = "*"
+pytest = "*"
 
 [dev-packages]
 

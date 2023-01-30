@@ -9,12 +9,36 @@ before_script:
 
 stages:
   - build
+  - test
+  - deploy
 
 build:
   stage: build
   script:
     - docker build --build-arg Version=$CI_COMMIT_TAG -t "$CI_REGISTRY_IMAGE:latest" -f Dockerfile .
     - docker tag "$CI_REGISTRY_IMAGE:latest" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+  only:
+    - tags
+  except:
+    - main
+
+test:
+  stage: test
+  script:
+    - docker compose up -d
+    - docker exec -it bqat-api-server-1 python3.8 -m pytest tests --junitxml=report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+  only:
+    - tags
+  except:
+    - main
+
+deploy:
+  stage: deploy
+  script:
     - docker images
     - docker ps
     - docker push "$CI_REGISTRY_IMAGE:latest"

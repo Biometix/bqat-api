@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 
 from api.config.models import EditTaskLog, Status, TaskLog, TaskQueue
+from api.utils import run_test_tasks
 
 router = APIRouter()
 
@@ -111,3 +112,8 @@ async def pop_queue_item(request: Request) -> dict:
     queue = request.app.queue
     item = await queue.rpop("queue")
     return item
+
+
+# @router.post("/test", response_description="BQAT core tests initiated")
+# async def run_tests():
+#     return await run_test_tasks()
