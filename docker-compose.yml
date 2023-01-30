@@ -49,4 +49,5 @@ services:
     volumes:
       - ./api:/app/api
       - ./bqat:/app/bqat
+      - ./tests:/app/tests
       - ./data:/app/data
