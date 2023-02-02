@@ -20,6 +20,7 @@ pandas-profiling = "*"
 rich = "*"
 python-multipart = "*"
 pytest = "*"
+pyod = "*"
 
 [dev-packages]
 

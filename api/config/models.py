@@ -369,6 +369,7 @@ class EditTaskLog(BaseModel):
 
 class CollectionLog(Document):
     collection: str
+    options: dict = Field(...)
     created: datetime = Field(default_factory=datetime.utcnow)
     modified: datetime = created
     samples: int = 0
@@ -380,7 +381,11 @@ class CollectionLog(Document):
         schema_extra = {
             "example": {
                 "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
-                "samples": 1000
+                "options": {
+                    "engine": "default",
+                    "mode": "face",
+                    "confidence": 0.7
+                },
             }
         }
 
