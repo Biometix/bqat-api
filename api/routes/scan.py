@@ -5,7 +5,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, st
 from fastapi.responses import JSONResponse, HTMLResponse
 
 from api.config.models import ScanEdit, TaskLog, ScanTask, Modality, ReportLog, SampleLog
-from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, get_files, check_options, retrieve_report, remove_report, get_info
+from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, run_outlier_detection_tasks, get_files, check_options, retrieve_report, remove_report, get_info, get_tag, DETECTORS
 
 from typing import List
 from beanie.odm.operators.update.general import Set
@@ -153,10 +153,7 @@ async def scan_uploaded(
     response_description="All scan log retrieved"
 )
 async def get_logs(request: Request) -> list:
-    logs = []
-    for doc in await request.app.log["datasets"].find().to_list(length=None):
-        doc.pop("_id")
-        logs.append(doc)
+    logs = await request.app.log["datasets"].find({"_id": 0}).to_list(length=None)
     return logs
 
 
@@ -166,9 +163,8 @@ async def get_logs(request: Request) -> list:
 )
 async def get_log(dataset_id: str, request: Request):
     if (
-        doc := await request.app.log["datasets"].find_one({"collection": dataset_id})
+        doc := await request.app.log["datasets"].find_one({"collection": dataset_id}, {"_id": 0})
     ) is not None:
-        doc.pop("_id")
         return doc
     else:
         raise HTTPException(
@@ -196,10 +192,7 @@ async def delete_log(dataset_id: str, request: Request):
     response_description="All image profiles for this dataset retrieved",
 )
 async def retrieve_all(dataset_id: str, request: Request):
-    profiles = []
-    for doc in await request.app.scan[dataset_id].find().to_list(length=None):
-        doc.pop("_id")
-        profiles.append(doc)
+    profiles = await request.app.scan[dataset_id].find({"_id": 0}).to_list(length=None)
     return profiles
 
 
@@ -218,9 +211,8 @@ async def delete_all(dataset_id: str, request: Request):
 )
 async def retrieve_one(dataset_id: str, scan_id: str, request: Request):
     if (
-        doc := await request.app.scan[dataset_id].find_one({"tag": scan_id})
+        doc := await request.app.scan[dataset_id].find_one({"tag": scan_id}, {"_id": 0})
     ) is not None:
-        doc.pop("_id")
         return doc
     else:
         raise HTTPException(
@@ -274,6 +266,110 @@ async def delete_one(dataset_id: str, scan_id: str, request: Request):
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Image profile [{scan_id}] not found"
+        )
+
+
+@router.get(
+    "/detectors",
+    response_description="Outlier detectors retrieved",
+    status_code=status.HTTP_200_OK
+)
+def get_detectors():
+    return {"outlier detectors": DETECTORS}
+
+
+@router.post(
+    "/{dataset_id}/outliers/detect",
+    response_description="Outlier detection task added",
+    status_code=status.HTTP_202_ACCEPTED
+)
+async def detect_outliers(
+    background_tasks: BackgroundTasks,
+    dataset_id: str,
+    request: Request,
+    options: dict = {}
+):
+    TARGET = {
+        "fingerprint": [
+            "NFIQ2",
+            "UniformImage",
+            "EmptyImageOrContrastTooLow",
+            "EdgeStd"
+        ],
+        "face": [
+            "confidence",
+            "ipd",
+            "yaw_degree",
+            "pitch_degree",
+            "roll_degree"
+        ],
+        "iris": [
+            "quality",
+            "normalized_contrast",
+            "normalized_iris_diameter",
+            "normalized_iris_pupil_gs",
+            "normalized_iris_sclera_gs",
+            "normalized_percent_visible_iris",
+            "normalized_sharpness"
+        ]
+    }
+    
+    if not options.get("columns"):
+        try:
+            if not (modality:= options.get("modality")):
+                doc = await request.app.log["datasets"].find_one({"collection": dataset_id})
+                modality = doc["options"]["mode"]
+            options.update({"columns": TARGET[modality]})
+        except Exception as e:
+            raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"failed to retrieve target columns: {str(e)}"
+        )
+
+    background_tasks.add_task(
+        run_outlier_detection_tasks,
+        dataset_id,
+        options,
+        request.app.scan,
+        request.app.log
+    )
+
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED, content={"outlier detection task in progress": dataset_id}
+    )
+
+
+@router.get(
+    "/{dataset_id}/outliers",
+    response_description="Outliers retrieved"
+)
+async def get_outliers(dataset_id: str, request: Request):
+    if outliers := await request.app.log["outliers"].find(
+            {"collection": dataset_id},
+            {"_id": 0}
+        ).to_list(length=None):
+        outliers = [get_tag(outlier["file"]) for outlier in outliers]
+        profiles = await request.app.scan[dataset_id].find(
+            {
+                "tag": {
+                    "$in": outliers
+                }
+            },
+            {"_id": 0}
+        ).to_list(length=None)
+    return profiles
+
+
+@router.delete(
+    "/{dataset_id}/outliers",
+    response_description="Outliers deleted",
+)
+async def delete_outliers(dataset_id: str, request: Request):
+    result = await request.app.log["outliers"].delete_many({"collection": dataset_id})
+    if result.deleted_count > 0:
+        return {"info": f"Outliers of [{dataset_id}] deleted: {result.deleted_count}"}
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Outliers of [{dataset_id}] not found"
         )
 
 
