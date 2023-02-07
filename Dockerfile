@@ -11,6 +11,9 @@ ENV MPLCONFIGDIR=/app/temp
 # ENV RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 ENV RAY_DISABLE_DOCKER_CPU_WARNING=1
 
+ARG Version
+
+LABEL BQAT.Version=$Version
 
 RUN yum -y update && \
     yum -y install epel-release && \
@@ -29,8 +32,6 @@ RUN yum -y update && \
 RUN wget https://github.com/usnistgov/NFIQ2/releases/download/v2.2.0/nfiq2-2.2.0-1.el7.x86_64.rpm -P /app/misc/ && \
     yum -y install ./misc/*el7*rpm
 
-COPY bqat/bqat_core/misc/haarcascade_smile.xml bqat_core/misc/haarcascade_smile.xml
-
 RUN wget https://www.python.org/ftp/python/3.8.16/Python-3.8.16.tgz && \
     tar xvf Python-3.8.16.tgz && cd Python-3.8*/ && \
     ./configure --enable-optimizations && \
@@ -45,8 +46,7 @@ RUN python3.8 -m pip install --upgrade pip && \
 
 COPY . .
 
-ARG Version
-LABEL BQAT.Version=$Version
+COPY bqat/bqat_core/misc/haarcascade_smile.xml bqat_core/misc/haarcascade_smile.xml
 
 RUN useradd assessor
 RUN chown -R assessor /app

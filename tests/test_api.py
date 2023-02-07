@@ -3,7 +3,7 @@ from zipfile import ZipFile
 from uuid import UUID, uuid4
 
 
-BASE = "http://localhost:8000/"
+BASE = "http://0.0.0.0:8848/"
 COLLECTION_1 = str(uuid4())
 COLLECTION_2 = str(uuid4())
 COLLECTION_3 = str(uuid4())
@@ -261,7 +261,7 @@ def test_clean_up():
     r = requests.delete(BASE + f"scan/{COLLECTION_4}/profiles")
     assert r.status_code == 200
 
-    r = requests.delete(BASE + f"scan/{COLLECTION_1}/report")
+    r = requests.delete(BASE + f"scan/{COLLECTION_3}/report")
     assert r.status_code == 200
 
 
