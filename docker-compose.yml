@@ -31,11 +31,11 @@ services:
       ME_CONFIG_MONGODB_ADMINPASSWORD: admin
 
   server:
-    image: bqat-api
+    image: bqat-api:latest
     build: .
     shm_size: 8gb
     ports:
-      - 8848:8000
+      - 8848:8848
     depends_on:
       - mongo
       - redis

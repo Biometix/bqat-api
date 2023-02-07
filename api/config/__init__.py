@@ -8,7 +8,7 @@ class CommonSettings(BaseSettings):
 
 class ServerSettings(BaseSettings):
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8848
 
 
 class DatabaseSettings(BaseSettings):

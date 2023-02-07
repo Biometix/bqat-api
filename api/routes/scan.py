@@ -153,7 +153,7 @@ async def scan_uploaded(
     response_description="All scan log retrieved"
 )
 async def get_logs(request: Request) -> list:
-    logs = await request.app.log["datasets"].find({"_id": 0}).to_list(length=None)
+    logs = await request.app.log["datasets"].find({}, {"_id": 0}).to_list(length=None)
     return logs
 
 
@@ -192,7 +192,7 @@ async def delete_log(dataset_id: str, request: Request):
     response_description="All image profiles for this dataset retrieved",
 )
 async def retrieve_all(dataset_id: str, request: Request):
-    profiles = await request.app.scan[dataset_id].find({"_id": 0}).to_list(length=None)
+    profiles = await request.app.scan[dataset_id].find({}, {"_id": 0}).to_list(length=None)
     return profiles
 
 
