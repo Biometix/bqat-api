@@ -354,7 +354,7 @@ def generate_report(data, **options):
         df = df.sample(frac=options.get("downsample", 0.05))
     ProfileReport(
         df,
-        title="Biometric Quality Report",
+        title=f"Biometric Quality Report by BQAT {__version__}",
         explorative=True,
         minimal=options.get("minimal", False),
         correlations={"cramers": {"calculate": False}},
