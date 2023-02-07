@@ -1,0 +1,3 @@
+[submodule "bqat"]
+	path = bqat
+	url = ../bqat-core.git

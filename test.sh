@@ -1,0 +1,1 @@
+docker compose exec -it server python3.8 -m pytest tests -v

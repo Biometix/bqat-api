@@ -1,0 +1,74 @@
+default:
+  image: docker:latest
+  services:
+    - name: docker:dind
+
+variables:
+  DOCKER_HOST: tcp://docker:2375/
+  DOCKER_DRIVER: overlay2
+  GIT_SUBMODULE_STRATEGY: normal
+  FF_NETWORK_PER_BUILD: "true"
+
+stages:
+  - build
+  - test
+  - release
+
+.tag_rules:
+  rules:
+    - if: $CI_COMMIT_TAG
+
+.commit_rules:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+
+build:
+  stage: build
+  script:
+    - docker build --build-arg Version=$CI_COMMIT_TAG -t "$CI_REGISTRY_IMAGE:test" -f Dockerfile .
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker push "$CI_REGISTRY_IMAGE:test"
+  rules:
+    - !reference [.commit_rules, rules]
+    - !reference [.tag_rules, rules]
+
+pytest:
+  stage: test
+  script:
+    - apk --update add curl
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker pull "$CI_REGISTRY_IMAGE:test"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "bqat-api:latest"
+    - docker compose up -d
+    - until curl docker:8848/scan/info; do echo waiting && sleep 5; done
+    - docker compose exec -it server python3.8 -m pytest tests -v
+  rules:
+    - !reference [.commit_rules, rules]
+    - !reference [.tag_rules, rules]
+
+release-bqat:
+  stage: release
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker pull "$CI_REGISTRY_IMAGE:test"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+  rules:
+    - !reference [.tag_rules, rules]
+
+release-px:
+  stage: release
+  script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker pull "$CI_REGISTRY_IMAGE:test"
+    - docker logout
+    - docker login -u "$PX_REGISTRY_USER" -p "$PX_REGISTRY_PASSWORD" $CI_REGISTRY
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$PX_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker tag "$CI_REGISTRY_IMAGE:test" "$PX_REGISTRY_IMAGE:latest"
+    - docker push "$PX_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker push "$PX_REGISTRY_IMAGE:latest"
+  rules:
+    - !reference [.tag_rules, rules]
