@@ -18,22 +18,36 @@ services:
     volumes:
       - db_mongo:/data/db
 
+  mongo-express:
+    image: mongo-express:latest
+    ports:
+      - 8081:8081
+    depends_on:
+      - server
+    environment:
+      ME_CONFIG_MONGODB_SERVER: mongo
+      ME_CONFIG_MONGODB_PORT: 27017
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: admin
+
   server:
-    image: ghcr.io/biometix/bqat-api:latest
-    build:
-      context: https://github.com/Biometix/bqat-api.git
-      shm_size: '8gb'
-    shm_size: '8gb'
+    image: bqat-api:latest
+    build: .
+    shm_size: 8gb
     ports:
       - 8848:8848
     depends_on:
       - mongo
       - redis
     environment:
+      DEBUG_MODE: YES
       MGO_URL: mongodb://root:admin@mongo:27017/
       SCAN_DB: scan
       LOG_DB: log
       RDS_URL: redis://redis:6379/
       QUEUE_DB: 0
     volumes:
+      - ./api:/app/api
+      - ./bqat:/app/bqat
+      - ./tests:/app/tests
       - ./data:/app/data
