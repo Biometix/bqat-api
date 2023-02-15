@@ -11,33 +11,78 @@ env:
 
 jobs:
   build:
-    name: Build and Push test image
+    name: Build and Push
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Check out Repository
         uses: actions/checkout@v3
         with:
           submodules: 'true'
-      
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: test
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
+  test:
+    name: Pull and Test
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Repository
+        uses: actions/checkout@v3
+      - name: Pull Test Image
+        run: |
+          docker pull ghcr.io/biometix/bqat-api:test
+          docker tag ghcr.io/biometix/bqat-api:test ghcr.io/biometix/bqat-api:latest
+      - name: Spin up the server
+        run: docker compose up -d
+      - name: Run test scripts
+        run: ./test.sh
+
+  release:
+    name: Rebuild and Release
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out Repository
+        uses: actions/checkout@v3
+        with:
+          submodules: 'true'
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Docker image
+      - name: Build and push release image
         uses: docker/build-push-action@v4
         with:
           context: .
