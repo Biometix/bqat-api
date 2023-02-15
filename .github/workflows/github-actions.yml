@@ -55,6 +55,8 @@ jobs:
           docker tag ghcr.io/biometix/bqat-api:test ghcr.io/biometix/bqat-api:latest
       - name: Spin up the server
         run: docker compose up -d
+      - name: Check server status
+        run: watch -g -n 5 'docker ps | grep "server"'
       - name: Run test scripts
         run: ./test.sh
 
