@@ -56,7 +56,9 @@ jobs:
       - name: Spin up the server
         run: docker compose up -d
       - name: Check server status
-        run: watch -g -n 5 'docker ps | grep "server"'
+        run: |
+          apt install -y curl
+          until curl docker:8848/scan/info; do echo waiting && sleep 5; done
       - name: Run test scripts
         run: ./test.sh
 
