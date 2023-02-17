@@ -58,7 +58,7 @@ jobs:
       - name: Check server status
         run: |
           sudo apt install -y curl
-          until curl docker:8848/scan/info; do echo waiting && sleep 5; done
+          until curl 0.0.0.0:8848/scan/info; do echo waiting && sleep 5; done
       - name: Run test scripts
         run: ./test.sh
 
