@@ -5,7 +5,6 @@ Biometric Quality Assessment Tool (BQAT) - API
 <img alt="GitHub tag (latest by date)" src="https://img.shields.io/github/v/tag/biometix/bqat-api">
 <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/biometix/bqat-api">
 <img alt="GitHub Workflow Status" src="https://img.shields.io/github/actions/workflow/status/biometix/bqat-api/github-actions.yml">
-<!-- <img alt="Test" src="https://img.shields.io/badge/test-all-green"> -->
 <img alt="GitHub issues" src="https://img.shields.io/github/issues-raw/biometix/bqat-api">
 <img alt="GitHub commit activity" src="https://img.shields.io/github/commit-activity/m/biometix/bqat-api">
 <img alt="GitHub" src="https://img.shields.io/github/license/biometix/bqat-api">
