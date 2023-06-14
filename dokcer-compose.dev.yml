@@ -29,6 +29,8 @@ services:
       ME_CONFIG_MONGODB_PORT: 27017
       ME_CONFIG_MONGODB_ADMINUSERNAME: root
       ME_CONFIG_MONGODB_ADMINPASSWORD: admin
+      ME_CONFIG_SITE_COOKIESECRET: 'cookiesecret'
+      ME_CONFIG_SITE_SESSIONSECRET: 'sessionsecret'
 
   server:
     image: bqat-api:latest

@@ -25,8 +25,7 @@ The face image assessment provides metrics includes head pose, smile detection, 
 
 ### Iris:
 
-The face image assessment provides various quality attributes, features, and ISO metrics.
-
+The iris sample assessment module provides various quality attributes, features, and ISO metrics.
 
 ## __Contributing__
 

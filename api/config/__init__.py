@@ -17,6 +17,7 @@ class DatabaseSettings(BaseSettings):
     LOG_DB: str
     RDS_URL: str
     QUEUE_DB: str
+    TEMP: str = "temp/"
 
 
 class Settings(CommonSettings, ServerSettings, DatabaseSettings):

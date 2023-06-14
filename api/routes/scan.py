@@ -1,23 +1,48 @@
-import os
 import json
-
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Request, status, UploadFile
-from fastapi.responses import JSONResponse, HTMLResponse
-
-from api.config.models import ScanEdit, TaskLog, ScanTask, Modality, ReportLog, SampleLog
-from api.utils import edit_attributes, run_scan_tasks, run_report_tasks, run_outlier_detection_tasks, get_files, check_options, retrieve_report, remove_report, get_info, get_tag, DETECTORS
-
-from typing import List
-from beanie.odm.operators.update.general import Set
+import os
 import uuid
+from typing import List
+
+from beanie.odm.operators.update.general import Set
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from api.config import Settings
+from api.config.models import (
+    Modality,
+    ReportLog,
+    SampleLog,
+    ScanEdit,
+    ScanTask,
+    TaskLog,
+)
+from api.utils import (
+    DETECTORS,
+    check_options,
+    edit_attributes,
+    get_files,
+    get_info,
+    get_tag,
+    remove_report,
+    retrieve_report,
+    run_outlier_detection_tasks,
+    run_report_tasks,
+    run_scan_tasks,
+)
 
 router = APIRouter()
 
 
 @router.post(
-    "/",
-    response_description="Add new scan tasks",
-    status_code=status.HTTP_201_CREATED
+    "/", response_description="Add new scan tasks", status_code=status.HTTP_201_CREATED
 )
 async def scan(
     background_tasks: BackgroundTasks,
@@ -40,13 +65,13 @@ async def scan(
         )
 
     if not (options := tasks.get("options")):
-        options = {} 
+        options = {}
     if not (options := check_options(options, modality)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"modality not support",
+            detail=f"modality not supported",
         )
-    
+
     input = tasks.get("input")
     if isinstance(input, str):
         if extension := options.get("extension"):
@@ -60,7 +85,7 @@ async def scan(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"illegal input",
         )
-    
+
     if not files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -68,26 +93,17 @@ async def scan(
         )
 
     task = await TaskLog(
-        collection=collection,
-        input=len(files), 
-        options=options
+        collection=collection, input=len(files), options=options
     ).create()
 
     samples = [
-        SampleLog(
-            tid=str(task.tid),
-            collection=str(task.collection),
-            path=file
-        )
+        SampleLog(tid=str(task.tid), collection=str(task.collection), path=file)
         for file in files
     ]
     await SampleLog.insert_many(samples)
 
     background_tasks.add_task(
-        run_scan_tasks,
-        request.app.scan,
-        request.app.log,
-        request.app.queue
+        run_scan_tasks, request.app.scan, request.app.log, request.app.queue
     )
 
     return JSONResponse(
@@ -98,7 +114,7 @@ async def scan(
 @router.post(
     "/uploaded",
     response_description="Add new scan tasks from uploaded file",
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_201_CREATED,
 )
 async def scan_uploaded(
     files: List[UploadFile],
@@ -111,36 +127,34 @@ async def scan_uploaded(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"please specify biometric modality",
         )
-    
-    tmp = "data/tmp/"
-    if not os.path.exists(tmp): os.mkdir(tmp)
+
+    if not os.path.exists(Settings().TEMP):
+        os.mkdir(Settings().TEMP)
     for file in files:
-        with open(f"data/tmp/{file.filename}", "wb") as out:
+        with open(f"{Settings().TEMP}{file.filename}", "wb") as out:
             data = await file.read()
             out.write(data)
 
-    files = get_files(tmp)
+    files = get_files(Settings().TEMP)
+    options = {"mode": modality, "uploaded": True}
+
+    if modality == "speech" and not options.get("type"):
+        options.update({"type": "file"})
+
     task = await TaskLog(
         collection=uuid.uuid4(),
-        input=len(files), 
-        options={"mode": modality, "uploaded": True}
+        input=len(files),
+        options=options,
     ).create()
 
     samples = [
-        SampleLog(
-            tid=str(task.tid),
-            collection=str(task.collection),
-            path=file
-        )
+        SampleLog(tid=str(task.tid), collection=str(task.collection), path=file)
         for file in files
     ]
     await SampleLog.insert_many(samples)
 
     background_tasks.add_task(
-        run_scan_tasks,
-        request.app.scan,
-        request.app.log,
-        request.app.queue
+        run_scan_tasks, request.app.scan, request.app.log, request.app.queue
     )
 
     return JSONResponse(
@@ -148,22 +162,18 @@ async def scan_uploaded(
     )
 
 
-@router.get(
-    "/logs",
-    response_description="All scan log retrieved"
-)
+@router.get("/logs", response_description="All scan log retrieved")
 async def get_logs(request: Request) -> list:
     logs = await request.app.log["datasets"].find({}, {"_id": 0}).to_list(length=None)
     return logs
 
 
-@router.get(
-    "/logs/{dataset_id}",
-    response_description="Dataset scan log retrieved"
-)
+@router.get("/logs/{dataset_id}", response_description="Dataset scan log retrieved")
 async def get_log(dataset_id: str, request: Request):
     if (
-        doc := await request.app.log["datasets"].find_one({"collection": dataset_id}, {"_id": 0})
+        doc := await request.app.log["datasets"].find_one(
+            {"collection": dataset_id}, {"_id": 0}
+        )
     ) is not None:
         return doc
     else:
@@ -173,17 +183,17 @@ async def get_log(dataset_id: str, request: Request):
         )
 
 
-@router.delete(
-    "/logs/{dataset_id}",
-    response_description="Dataset scan log deleted"
-)
+@router.delete("/logs/{dataset_id}", response_description="Dataset scan log deleted")
 async def delete_log(dataset_id: str, request: Request):
-    delete_result = await request.app.log["datasets"].delete_one({"collection": dataset_id})
+    delete_result = await request.app.log["datasets"].delete_one(
+        {"collection": dataset_id}
+    )
     if delete_result.deleted_count > 0:
         return {"info": f"Scan log of [{dataset_id}] deleted"}
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Scan log of [{dataset_id}] not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan log of [{dataset_id}] not found",
         )
 
 
@@ -192,7 +202,9 @@ async def delete_log(dataset_id: str, request: Request):
     response_description="All image profiles for this dataset retrieved",
 )
 async def retrieve_all(dataset_id: str, request: Request):
-    profiles = await request.app.scan[dataset_id].find({}, {"_id": 0}).to_list(length=None)
+    profiles = (
+        await request.app.scan[dataset_id].find({}, {"_id": 0}).to_list(length=None)
+    )
     return profiles
 
 
@@ -206,8 +218,7 @@ async def delete_all(dataset_id: str, request: Request):
 
 
 @router.get(
-    "/{dataset_id}/profiles/{scan_id}",
-    response_description="Image profile retrieved"
+    "/{dataset_id}/profiles/{scan_id}", response_description="Image profile retrieved"
 )
 async def retrieve_one(dataset_id: str, scan_id: str, request: Request):
     if (
@@ -265,14 +276,15 @@ async def delete_one(dataset_id: str, scan_id: str, request: Request):
         return {"info": f"Image profile [{scan_id}] deleted"}
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Image profile [{scan_id}] not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Image profile [{scan_id}] not found",
         )
 
 
 @router.get(
     "/detectors",
     response_description="Outlier detectors retrieved",
-    status_code=status.HTTP_200_OK
+    status_code=status.HTTP_200_OK,
 )
 def get_detectors():
     return {"outlier detectors": DETECTORS}
@@ -281,28 +293,22 @@ def get_detectors():
 @router.post(
     "/{dataset_id}/outliers/detect",
     response_description="Outlier detection task added",
-    status_code=status.HTTP_202_ACCEPTED
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def detect_outliers(
     background_tasks: BackgroundTasks,
     dataset_id: str,
     request: Request,
-    options: dict = {}
+    options: dict = {},
 ):
     TARGET = {
         "fingerprint": [
             "NFIQ2",
             "UniformImage",
             "EmptyImageOrContrastTooLow",
-            "EdgeStd"
+            "EdgeStd",
         ],
-        "face": [
-            "confidence",
-            "ipd",
-            "yaw_degree",
-            "pitch_degree",
-            "roll_degree"
-        ],
+        "face": ["confidence", "ipd", "yaw_degree", "pitch_degree", "roll_degree"],
         "iris": [
             "quality",
             "normalized_contrast",
@@ -310,52 +316,51 @@ async def detect_outliers(
             "normalized_iris_pupil_gs",
             "normalized_iris_sclera_gs",
             "normalized_percent_visible_iris",
-            "normalized_sharpness"
-        ]
+            "normalized_sharpness",
+        ],
     }
-    
+
     if not options.get("columns"):
         try:
-            if not (modality:= options.get("modality")):
-                doc = await request.app.log["datasets"].find_one({"collection": dataset_id})
+            if not (modality := options.get("modality")):
+                doc = await request.app.log["datasets"].find_one(
+                    {"collection": dataset_id}
+                )
                 modality = doc["options"]["mode"]
             options.update({"columns": TARGET[modality]})
         except Exception as e:
             raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"failed to retrieve target columns: {str(e)}"
-        )
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"failed to retrieve target columns: {str(e)}",
+            )
 
     background_tasks.add_task(
         run_outlier_detection_tasks,
         dataset_id,
         options,
         request.app.scan,
-        request.app.log
+        request.app.log,
     )
 
     return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED, content={"outlier detection task in progress": dataset_id}
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"outlier detection task in progress": dataset_id},
     )
 
 
-@router.get(
-    "/{dataset_id}/outliers",
-    response_description="Outliers retrieved"
-)
+@router.get("/{dataset_id}/outliers", response_description="Outliers retrieved")
 async def get_outliers(dataset_id: str, request: Request):
-    if outliers := await request.app.log["outliers"].find(
-            {"collection": dataset_id},
-            {"_id": 0}
-        ).to_list(length=None):
+    if (
+        outliers := await request.app.log["outliers"]
+        .find({"collection": dataset_id}, {"_id": 0})
+        .to_list(length=None)
+    ):
         outliers = [get_tag(outlier["file"]) for outlier in outliers]
-        profiles = await request.app.scan[dataset_id].find(
-            {
-                "tag": {
-                    "$in": outliers
-                }
-            },
-            {"_id": 0}
-        ).to_list(length=None)
+        profiles = (
+            await request.app.scan[dataset_id]
+            .find({"tag": {"$in": outliers}}, {"_id": 0})
+            .to_list(length=None)
+        )
     return profiles
 
 
@@ -369,43 +374,43 @@ async def delete_outliers(dataset_id: str, request: Request):
         return {"info": f"Outliers of [{dataset_id}] deleted: {result.deleted_count}"}
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Outliers of [{dataset_id}] not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Outliers of [{dataset_id}] not found",
         )
 
 
 @router.post(
     "/{dataset_id}/report/generate",
     response_description="Report generation task added",
-    status_code=status.HTTP_202_ACCEPTED
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def generate_report(
     background_tasks: BackgroundTasks,
     dataset_id: str,
     request: Request,
-    options: dict = {}
+    options: dict = {},
 ):
     found = await ReportLog.find_one(ReportLog.collection == dataset_id)
     await ReportLog.find_one(ReportLog.collection == dataset_id).upsert(
-        Set({
-            ReportLog.minimal: options.get("minimal", False),
-            ReportLog.downsample: options.get("downsample", False),
-            ReportLog.file_id: None,
-            ReportLog.filename: None,
-        }),
-        on_insert=ReportLog(collection=dataset_id, **options)
+        Set(
+            {
+                ReportLog.minimal: options.get("minimal", False),
+                ReportLog.downsample: options.get("downsample", False),
+                ReportLog.file_id: None,
+                ReportLog.filename: None,
+            }
+        ),
+        on_insert=ReportLog(collection=dataset_id, **options),
     )
 
     if found and found.file_id:
         await remove_report(found.file_id, request.app.log)
 
-    background_tasks.add_task(
-        run_report_tasks,
-        request.app.scan,
-        request.app.log
-    )
-    
+    background_tasks.add_task(run_report_tasks, request.app.scan, request.app.log)
+
     return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED, content={"reporting in progress": dataset_id}
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"reporting in progress": dataset_id},
     )
 
 
@@ -433,13 +438,16 @@ async def get_report(dataset_id: str, request: Request):
     response_description="Dataset report deleted",
 )
 async def delete_report(dataset_id: str, request: Request):
-    doc = await request.app.log["reports"].find_one_and_delete({"collection": dataset_id})
+    doc = await request.app.log["reports"].find_one_and_delete(
+        {"collection": dataset_id}
+    )
     if doc:
         await remove_report(doc["file_id"], request.app.log)
         return {"info": f"Report of [{dataset_id}] deleted"}
     else:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail=f"Report of [{dataset_id}] not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Report of [{dataset_id}] not found",
         )
 
 
@@ -525,7 +533,8 @@ async def get_status(request: Request):
             }
     else:
         return JSONResponse(
-            status_code=status.HTTP_202_ACCEPTED, content={"status": "No task in the queue"}
+            status_code=status.HTTP_202_ACCEPTED,
+            content={"status": "No task in the queue"},
         )
 
 
@@ -567,14 +576,10 @@ async def clear_queue(request: Request):
         queue.delete(tid)
         await log["tasks"].delete_one({"tid": tid})
     return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED,
-        content={"message": "Task queue cleared"}
+        status_code=status.HTTP_202_ACCEPTED, content={"message": "Task queue cleared"}
     )
 
 
 @router.get("/info", response_description="BQAT backend info retrieved")
 async def info():
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content=get_info()
-    )
+    return JSONResponse(status_code=status.HTTP_200_OK, content=get_info())
