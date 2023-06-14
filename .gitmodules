@@ -1,3 +1,3 @@
 [submodule "bqat"]
 	path = bqat
-	url = https://gitlab.com/biometix/products/biometric-quality-assessment-tool/bqat-core.git
+	url = https://github.com/Biometix/bqat-core.git
