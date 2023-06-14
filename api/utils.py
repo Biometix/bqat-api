@@ -1,32 +1,32 @@
 import glob
-import os
-import shutil
 import hashlib
 import json
+import os
+import platform
+import shutil
+import subprocess
 import time
 from datetime import datetime
-import hashlib
-import platform
+
 import pandas as pd
+import ray
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pandas_profiling import ProfileReport
-import subprocess
-from pyod.models.ecod import ECOD
 from pyod.models.cblof import CBLOF
+from pyod.models.copod import COPOD
+from pyod.models.ecod import ECOD
 from pyod.models.iforest import IForest
 from pyod.models.knn import KNN
-from pyod.models.copod import COPOD
 from pyod.models.pca import PCA
-
-import ray
-from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket, AsyncIOMotorDatabase
 from redis.asyncio.client import Redis
+from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn
 
+from api.config import Settings
 from api.config.models import CollectionLog, Status, TaskQueue
-from bqat.bqat_core import scan, __version__, __name__
-
+from bqat.bqat_core import __name__, __version__, scan
 
 DETECTORS = ("ECOD", "CBLOF", "IForest", "KNN", "COPOD", "PCA")
+
 
 @ray.remote
 def scan_task(path, options):
@@ -90,10 +90,7 @@ async def run_scan_tasks(
 
         if task.get("status") == Status.new:
             if not await log["datasets"].find_one({"collection": collection}):
-                await CollectionLog(
-                    collection=collection,
-                    options=options
-                ).create()
+                await CollectionLog(collection=collection, options=options).create()
 
         task = await log["tasks"].find_one_and_update(
             {"tid": tid}, {"$set": {"status": 1}}
@@ -173,7 +170,7 @@ async def run_scan_tasks(
                 {"tid": tid}, {"$set": {"status": 2}}
             )
             if task["options"].get("uploaded"):
-                shutil.rmtree("data/tmp/")
+                shutil.rmtree(Settings().TEMP)
             await queue.rpop("task_queue")
             await queue.delete(tid)
             await log["samples"].delete_many({"tid": tid})
@@ -267,7 +264,7 @@ async def run_test_tasks() -> str:
     return out.stdout
 
 
-def get_files(folder, ext=("jpg", "jpeg", "png", "bmp", "wsq", "jp2")) -> list:
+def get_files(folder, ext=("jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav")) -> list:
     file_globs = []
     files = []
     for ext in extended(ext):
@@ -340,6 +337,12 @@ def check_options(options, modality):
             options["target"] = "png"
     elif modality == "iris":
         pass
+    elif modality == "speech":
+        if not options.get("type"):
+            options.update({"type": "file"})
+        if options.get("type") == "folder":
+            options.update({"type": "file"})
+            print("folder scan not supported")
     else:
         return False
     return options
@@ -391,7 +394,7 @@ def get_tag(identifier):
     return tag.hexdigest()
 
 
-def get_outliers(data: list, detector: str="ECOD"):
+def get_outliers(data: list, detector: str = "ECOD"):
     # HACK
     # _, ver, _ = platform.python_version_tuple()
     # if ver >= 10:
