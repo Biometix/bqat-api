@@ -7,22 +7,24 @@ name = "pypi"
 opencv-python = "==4.6.0.66"
 opencv-contrib-python = "==4.6.0.66"
 mediapipe = "*"
-image-quality = {git = "https://github.com/ocampor/image-quality"}
 wsq = "*"
 pillow = "*"
 fastapi = "*"
 uvicorn = {extras = ["standard"], version = "*"}
 motor = "*"
-ray = "*"
+ray = "==2.2"
 redis = "*"
 beanie = "*"
-pandas-profiling = "*"
+ydata-profiling = "*"
+imutils = "*"
 rich = "*"
 python-multipart = "*"
-pytest = "*"
 pyod = "*"
+urllib3 = "==1.26.14"
+pydantic = "==1.*"
 
 [dev-packages]
+pytest = "*"
 
 [requires]
-python_version = "3.10"
+python_version = "3.8"
