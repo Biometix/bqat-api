@@ -55,7 +55,7 @@ async def delete_task_log(request: Request, task_id: UUID) -> dict:
     return {"message": "Successful, task log removed."}
 
 
-@router.post("/{task_id}/top/", response_description="Task moved to top")
+@router.post("/{task_id}/top", response_description="Task moved to top")
 async def top_task(request: Request, task_id: UUID) -> dict:
     queue = request.app.queue
     await queue.lrem("task_queue", 1, str(task_id))
@@ -63,7 +63,7 @@ async def top_task(request: Request, task_id: UUID) -> dict:
     return {"message": f"Successful, task [{task_id}] moved to front of the queue."}
 
 
-@router.post("/reload/", response_description="Task queue reloaded")
+@router.post("/reload", response_description="Task queue reloaded")
 async def reload_task(request: Request) -> dict:
     logs = await TaskLog.find(TaskLog.status != Status.done).to_list(length=None)
     queue = request.app.queue
@@ -83,14 +83,14 @@ async def reload_task(request: Request) -> dict:
     return {"message": "Successful, task queue reloaded from logs."}
 
 
-@router.get("/queue/", response_description="Task queue retrieved")
+@router.get("/queue", response_description="Task queue retrieved")
 async def get_queue(request: Request) -> list:
     queue = request.app.queue
     queue = await queue.lrange("task_queue", 0, -1)
     return queue
 
 
-@router.delete("/queue/", response_description="Task queue cleared")
+@router.delete("/queue", response_description="Task queue cleared")
 async def clear_queue(request: Request):
     queue = request.app.queue
     tasks = await queue.lrange("task_queue", 0, -1)

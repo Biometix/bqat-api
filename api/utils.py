@@ -117,7 +117,7 @@ async def run_scan_tasks(
                 if len(tasks) < step:
                     ready = tasks
                     results = ray.get(tasks)
-                    not_ready = 0
+                    not_ready = []
                 else:
                     ready, not_ready = ray.wait(tasks, num_returns=step, timeout=3)
                     results = ray.get(ready)
@@ -169,11 +169,12 @@ async def run_scan_tasks(
             await log["tasks"].find_one_and_update(
                 {"tid": tid}, {"$set": {"status": 2}}
             )
-            if task["options"].get("uploaded"):
-                shutil.rmtree(Settings().TEMP)
             await queue.rpop("task_queue")
             await queue.delete(tid)
             await log["samples"].delete_many({"tid": tid})
+
+    if os.path.exists(Settings().TEMP):
+        shutil.rmtree(Settings().TEMP)
 
     task_timer = time.time() - task_timer
     t_min, t_sec = divmod(task_timer, 60)
