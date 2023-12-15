@@ -9,8 +9,23 @@ from api.config.models import CollectionLog, TaskLog, ReportLog, SampleLog
 from api.routes.task import router as bqat_task
 from api.routes.scan import router as bqat_scan
 
-app = FastAPI()
+
 settings = Settings()
+app = FastAPI(
+    title=settings.APP_NAME,
+    summary=settings.SUMMARY,
+    description=settings.DESCRIPTION,
+    version=settings.APP_VERSION,
+    contact={
+        "name": "Biometix",
+        "url": "https://biometix.github.io/",
+        "email": "support@biometix.com",
+    },
+    license_info={
+        "name": "Apache 2.0",
+        "url": "https://www.apache.org/licenses/LICENSE-2.0.html",
+    },
+)
 
 
 @app.on_event("startup")

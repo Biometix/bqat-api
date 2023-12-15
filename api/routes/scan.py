@@ -44,7 +44,7 @@ router = APIRouter()
 @router.post(
     "/", response_description="Add new scan tasks", status_code=status.HTTP_201_CREATED
 )
-async def scan(
+async def create_scan_task(
     background_tasks: BackgroundTasks,
     request: Request,
     modality: Modality,
@@ -116,7 +116,7 @@ async def scan(
     response_description="Add new scan tasks from uploaded file",
     status_code=status.HTTP_201_CREATED,
 )
-async def scan_uploaded(
+async def create_scan_task_uploaded(
     files: List[UploadFile],
     background_tasks: BackgroundTasks,
     request: Request,
@@ -306,17 +306,28 @@ async def detect_outliers(
             "NFIQ2",
             "UniformImage",
             "EmptyImageOrContrastTooLow",
+            "SufficientFingerprintForeground",
             "EdgeStd",
         ],
-        "face": ["confidence", "ipd", "yaw_degree", "pitch_degree", "roll_degree"],
+        "face": [
+            "confidence",
+            "ipd",
+            "yaw_degree",
+            "pitch_degree",
+            "roll_degree",
+        ],
         "iris": [
-            "quality",
-            "normalized_contrast",
-            "normalized_iris_diameter",
-            "normalized_iris_pupil_gs",
-            "normalized_iris_sclera_gs",
-            "normalized_percent_visible_iris",
-            "normalized_sharpness",
+            # "quality",
+            # "normalized_contrast",
+            # "normalized_iris_pupil_gs",
+            # "normalized_iris_sclera_gs",
+            # "normalized_percent_visible_iris",
+            # "normalized_sharpness",
+            "iso_overall_quality",
+            "iso_sharpness",
+            "iso_iris_sclera_contrast",
+            "iso_iris_pupil_contrast",
+            "iso_iris_pupil_concentricity",
         ],
     }
 
@@ -330,7 +341,7 @@ async def detect_outliers(
             options.update({"columns": TARGET[modality]})
         except Exception as e:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"failed to retrieve target columns: {str(e)}",
             )
 
@@ -512,7 +523,7 @@ async def delete_report(dataset_id: str, request: Request):
 
 
 @router.get("/status", response_description="Scan task status retrieved")
-async def get_status(request: Request):
+async def get_task_status(request: Request):
     log = request.app.log
     tasks = await log["task"].find({"status": {"$lt": 2}}).to_list(length=None)
     if len(tasks) > 0:
@@ -567,7 +578,7 @@ async def get_status(request: Request):
 
 
 @router.post("/clear", response_description="Task queue stopped and cleared")
-async def clear_queue(request: Request):
+async def clear_task_queue(request: Request):
     queue = request.app.queue
     queue.delete("scan_queue")
     log = request.app.log
@@ -576,10 +587,10 @@ async def clear_queue(request: Request):
         queue.delete(tid)
         await log["tasks"].delete_one({"tid": tid})
     return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED, content={"message": "Task queue cleared"}
+        status_code=status.HTTP_202_ACCEPTED, detail="Task queue cleared",
     )
 
 
 @router.get("/info", response_description="BQAT backend info retrieved")
-async def info():
+async def get_version_info():
     return JSONResponse(status_code=status.HTTP_200_OK, content=get_info())
