@@ -2,7 +2,7 @@ import json
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, status
 
 from api.config.models import EditTaskLog, Status, TaskLog, TaskQueue
 from api.utils import run_test_tasks
@@ -28,8 +28,10 @@ async def get_task_logs() -> List[TaskLog]:
 
 @router.get("/{task_id}/", response_description="Task log retrieved")
 async def get_task_log(task_id: UUID) -> TaskLog:
-    log = await TaskLog.find_one(TaskLog.tid == str(task_id))
-    return log
+    if log := await TaskLog.find_one(TaskLog.tid == str(task_id)):
+        return log
+    else:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
 
 # @router.put("/{task_id}/", response_description="Task log retrieved")

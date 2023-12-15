@@ -12,7 +12,7 @@ pillow = "*"
 fastapi = "*"
 uvicorn = {extras = ["standard"], version = "*"}
 motor = "*"
-ray = "==2.2"
+ray = "*"
 redis = "*"
 beanie = "*"
 ydata-profiling = "*"
@@ -22,9 +22,10 @@ python-multipart = "*"
 pyod = "*"
 urllib3 = "==1.26.14"
 pydantic = "==1.*"
+email-validator = "*"
 
 [dev-packages]
 pytest = "*"
 
 [requires]
-python_version = "3.8"
+python_version = "3.10"
