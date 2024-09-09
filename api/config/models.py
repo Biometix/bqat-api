@@ -1,18 +1,21 @@
 import os
-from uuid import UUID, uuid4
-from typing import Optional, List, Union, Any
-from enum import IntEnum, Enum
-
 from datetime import datetime
-from beanie import Document
-from pydantic import BaseModel, Field, validator
+from enum import Enum, IntEnum
+from typing import List, Optional, Union
+from uuid import UUID, uuid4
 
+from beanie import Document
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class ImageRequest(BaseModel):
+    file: str
+    format: str = "webp"
 
 class Metadata(BaseModel):
     result: dict = Field(...)
-
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "result": {
                     "uuid": "8cea4af7-1670-5752-be3c-b29f49fc039d",
@@ -68,6 +71,7 @@ class Metadata(BaseModel):
                 }
             }
         }
+    )
 
 
 class Modality(str, Enum):
@@ -78,31 +82,142 @@ class Modality(str, Enum):
 
 
 class Engine(str, Enum):
-    default = "default"
+    bqat = "bqat"
+    ofiq = "ofiq"
+    biqt = "biqt"
 
 
-# class Options(BaseModel):
-#     mode: Modality
-#     engine: Engine = Engine.default
-#     source: Union[List, str] = 'default'
-#     target: str = 'png'
-#     quality: bool = True
-#     head: bool = True
-#     face: bool = True
-#     confidence: float = 0.7
+class Format(str, Enum):
+    png = "png"
+    jpeg = "jpeg"
+    jpg = "jpg"
+    bmp = "bmp"
+    jp2 = "jp2"
+    wsq = "wsq"
+    wav = "wav"
 
-#     @validator('confidence')
-#     def confidence_level_must_be_legal(cls, v):
-#         if v < 0 or v > 1:
-#             raise ValueError('confidence value illegal')
-#         return v
+
+class ColourMode(str, Enum):
+    grayscale = "grayscale"
+    greyscale = "greyscale"
+    bw = "bw"
+    rgb = "rgb"
+    rgba = "rgba"
+    hsv = "hsv"
+    cmyk = "cmyk"
+    ycbcr = "ycbcr"
+
+
+class Detector(Enum):
+    default = "ECOD"
+    ecod = "ECOD"
+    cblof = "CBLOF"
+    iforest = "IForest"
+    knn = "KNN"
+    copod = "COPOD"
+    pca = "PCA"
+    # deepsvdd = "DeepSVDD" # TensorFlow required
+    # dif = "DIF" # PyTorch required
+
+
+class DetectorOptions(BaseModel):
+    detector: Detector | None = Detector.ecod
+    columns: List[str] | None = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "detector": "ECOD",
+                "columns": [
+                    "ipd",
+                    "yaw_degree",
+                    "pitch_degree",
+                    "roll_degree",
+                ],
+            }
+        }
+    )
+
+
+class ReportOptions(BaseModel):
+    minimal: Union[bool, None] | None = False
+    downsample: Union[float, None] | None = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "minimal": False,
+                "downsample": 0.5,
+            }
+        }
+    )
+
+
+class PreprocessingOptions(BaseModel):
+    scale: Union[float, None] = 1.0
+    resize: Union[int, None] = None
+    convert: Union[Format, None] = None
+    mode: Union[ColourMode, None] = None
+    pattern: Union[str, None] = None
+
+    @field_validator("scale")
+    @classmethod
+    def scaler_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v <= 0:
+            raise ValueError("scaler value must be positive")
+        elif v > 20:
+            raise ValueError("scaler value must be less than 10")
+        return v
+
+    @field_validator("resize")
+    @classmethod
+    def resize_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v < 20:
+            raise ValueError(
+                f"image size (width) must be greater than 20, but {v} given"
+            )
+        elif v > 10000:
+            raise ValueError(
+                f"image size (width) must be less than 10000, but {v} given"
+            )
+        return v
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "convert": "png",
+                "scale": 0.3,
+                "mode": "greyscale",
+                "pattern": ".*face.*"
+            }
+        }
+    )
+
+
+class ScanOptions(BaseModel):
+    mode: Union[Modality, None] = None
+    engine: Union[Engine, None] = None
+    source: Union[List[Format], None] = None
+    target: Union[Format, None] = None
+    confidence: Union[float, None] = None
+    pattern: Union[str, None] = None
+    type: Union[str, None] = None
+    batch: Union[int, None] = None
+    # quality: bool = True
+    # head: bool = True
+    # face: bool = True
 
 
 class Folder(BaseModel):
     path: str = Field(...)
     collection: str = Field(...)
 
-    @validator("path")
+    @field_validator("path")
+    @classmethod
     def folder_must_exist(cls, v):
         if not os.path.exists(v):
             raise ValueError(f"folder '{v}' not exist")
@@ -110,28 +225,30 @@ class Folder(BaseModel):
             raise ValueError(f"path to '{v}' is not a folder")
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "path": "data/helen/",
                 "collection": "7dc79c8f-855a-42c8-8628-bff4d9ac66e4",
             }
         }
+    )
 
 
 class FileList(BaseModel):
     files: List[str] = Field(...)
     collection: str = Field(...)
 
-    @validator("files")
+    @field_validator("files")
+    @classmethod
     def path_must_exist(cls, files):
         for v in files:
             if not os.path.exists(v):
                 raise ValueError(f"file '{v}' not exist")
         return files
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "files": [
                     "data/helen/20301003_1.jpg",
@@ -141,15 +258,16 @@ class FileList(BaseModel):
                 "collection": "2e7f31ef-cba8-4365-856e-38b0621a6041",
             }
         }
+    )
 
 
 class ScanTask(BaseModel):
-    modality: Optional[Modality]
-    options: Optional[dict]
+    options: ScanOptions | None = None
     input: Union[List[str], str, None] = Field(...)
-    collection: str = Field(default_factory=uuid4)
+    collection: UUID = Field(default_factory=uuid4)
 
-    @validator("input")
+    @field_validator("input")
+    @classmethod
     def path_must_exist(cls, input):
         if isinstance(input, str):
             if not os.path.exists(input):
@@ -163,72 +281,76 @@ class ScanTask(BaseModel):
                     raise ValueError(f"file '{v}' not exist")
             return input
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "options": {
-                    "engine": "default",
+                    "engine": "bqat",
+                    "pattern": ".*face.*"
                 },
-                "input": [
-                    "data/helen/20301003_1.jpg",
-                    "data/helen/20315024_1.jpg",
-                    "data/helen/17349955_1.jpg",
-                ],
-                "collection": "2e7f31ef-cba8-4365-856e-38b0621a6041",
+                "input": "data/helen/",
             }
         }
+    )
 
 
 class ScanEdit(BaseModel):
-    pitch: Optional[float]
-    yaw: Optional[float]
-    roll: Optional[float]
-    age: Optional[int]
-    race: Optional[str]
-    gender: Optional[str]
-    emotion: Optional[str]
-    quality: Optional[float]
+    pitch: Optional[float] = None
+    yaw: Optional[float] = None
+    roll: Optional[float] = None
+    age: Optional[int] = None
+    race: Optional[str] = None
+    gender: Optional[str] = None
+    emotion: Optional[str] = None
+    quality: Optional[float] = None
 
-    @validator("quality")
+    @field_validator("quality")
+    @classmethod
     def quality_must_be_legal(cls, v):
         if v < 0 or v > 100:
             raise ValueError("quality value illegal")
         return v
 
-    @validator("pitch")
+    @field_validator("pitch")
+    @classmethod
     def pitch_must_be_legal(cls, v):
         if v < -90 or v > 90:
             raise ValueError("angle value illegal")
         return v
 
-    @validator("yaw")
+    @field_validator("yaw")
+    @classmethod
     def yaw_must_be_legal(cls, v):
         if v < -90 or v > 90:
             raise ValueError("angle value illegal")
         return v
 
-    @validator("roll")
+    @field_validator("roll")
+    @classmethod
     def roll_must_be_legal(cls, v):
         if v < -90 or v > 90:
             raise ValueError("angle value illegal")
         return v
 
-    @validator("age")
+    @field_validator("age")
+    @classmethod
     def age_must_be_legal(cls, v):
         if v < 0 or v > 200:
             raise ValueError("age value illegal")
         return v
 
-    @validator("gender")
+    @field_validator("gender")
+    @classmethod
     def gender_must_be_legal(cls, v):
-        gender_list = ("Woman", "Man")
-        if v not in gender_list:
+        gender_List = ("Woman", "Man")
+        if v not in gender_List:
             raise ValueError("gender value not found")
         return v
 
-    @validator("race")
+    @field_validator("race")
+    @classmethod
     def race_must_be_legal(cls, v):
-        race_list = (
+        race_List = (
             "asian",
             "indian",
             "black",
@@ -236,19 +358,20 @@ class ScanEdit(BaseModel):
             "middle eastern",
             "latino hispanic",
         )
-        if v not in race_list:
+        if v not in race_List:
             raise ValueError("race value not found")
         return v
 
-    @validator("emotion")
+    @field_validator("emotion")
+    @classmethod
     def emotion_must_be_legal(cls, v):
-        race_list = ("angry", "disgust", "fear", "happy", "sad", "surprise", "neutral")
-        if v not in race_list:
+        race_List = ("angry", "disgust", "fear", "happy", "sad", "surprise", "neutral")
+        if v not in race_List:
             raise ValueError("emotion value not found")
         return v
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "yaw": 8.550166426089962,
                 "pitch": 10.345162966493177,
@@ -260,6 +383,7 @@ class ScanEdit(BaseModel):
                 "quality": 24.8,
             }
         }
+    )
 
 
 class MetadataList(BaseModel):
@@ -273,90 +397,159 @@ class Status(IntEnum):
 
 
 class ReportLog(Document):
-    collection: Union[UUID, None]
-    minimal: Union[bool, None] = False
-    downsample: Union[bool, None] = False
-    file_id: Union[Any, None] = None
+    tid: UUID = Field(default_factory=uuid4)
+    collection: Union[UUID, str, None] = None
+    external_input: Union[str, None] = None
+    options: Union[ReportOptions, None] = ReportOptions()
+    file_id: Union[UUID, str, None] = None
     filename: Union[str, None] = None
+    modified: datetime = Field(default_factory=datetime.now)
+    status: Status = Status.new
+    task_refs: Union[List, None] = []
 
     class Settings:
         name = "reports"
         bson_encoders = {UUID: str}
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
-                "minimal": True,
-                "downsample": 0.1,
+                "options": {
+                    "minimal": True,
+                    "downsample": 0.1,
+                }
             }
         }
+    )
+
+
+class OutlierDetectionLog(Document):
+    tid: UUID = Field(default_factory=uuid4)
+    collection: Union[UUID, str, None]
+    options: Union[DetectorOptions, None] = DetectorOptions()
+    outliers: Union[List, None] = []
+    modified: datetime = Field(default_factory=datetime.now)
+    status: Status = Status.new
+    task_refs: Union[List, None] = None
+
+    class Settings:
+        name = "outliers"
+        bson_encoders = {UUID: str}
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "options": {
+                    "detector": "ECOD",
+                    "columns": [
+                        "ipd",
+                        "yaw_degree",
+                        "pitch_degree",
+                        "roll_degree",
+                    ],
+                }
+            }
+        }
+    )
+
+
+class PreprocessingLog(Document):
+    tid: UUID = Field(default_factory=uuid4)
+    source: Union[str, None] = None
+    target: Union[str, None] = None
+    input_format: List = [f.value for f in Format]
+    options: PreprocessingOptions = PreprocessingOptions()
+    modified: datetime = Field(default_factory=datetime.now)
+    status: Status = Status.new
+    task_refs: Union[List, None] = []
+
+    class Settings:
+        name = "preprocessings"
+        bson_encoders = {UUID: str}
+
+    @field_validator("source")
+    @classmethod
+    def path_must_exist(cls, v):
+        if not os.path.exists(v):
+            raise ValueError(f"'{v}' not exist")
+        return v
 
 
 class TaskLog(Document):
     tid: UUID = Field(default_factory=uuid4)
-    options: dict = Field(...)
+    options: Union[dict, None] = None
     collection: UUID = Field(default_factory=uuid4)
     status: Status = Status.new
-    input: int = Field(...)
+    input: str = Field(...)
+    total: int = Field(...)
     finished: int = 0
-    elapse: int = 0
+    elapse: float = 0.0
+    modified: datetime = Field(default_factory=datetime.now)
+    task_refs: Union[List, None] = []
 
     class Settings:
         name = "tasks"
         bson_encoders = {UUID: str}
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
-                "input": 1000,
-                "options": {"engine": "default", "mode": "face", "confidence": 0.7},
-                "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
+                "input": "data/input",
+                "total": 200,
+                "options": {
+                    "engine": "bqat",
+                    "mode": "face",
+                    "confidence": 0.7,
+                },
             }
         }
+    )
 
 
 class EditTaskLog(BaseModel):
-    input: Optional[List[str]]
-    finished: Optional[List[str]]
-    options: Optional[dict]
-    collection: Optional[str]
-    status: Optional[Status]
-    elapse: Optional[int]
-
-    class Config:
-        schema_extra = {
+    input: Optional[str] = None
+    total: Optional[int] = None
+    finished: Optional[int] = None
+    options: Optional[dict] = None
+    collection: Optional[str] = None
+    status: Optional[Status] = None
+    elapse: Optional[int] = None
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
-                "input": [
-                    "data/input/106242334_1.jpg",
-                    "data/input/108349477_1.jpg",
-                    "data/input/109172267_1.jpg",
-                ],
-                "finished": ["data/input/109172267_1.jpg"],
-                "options": {"engine": "default", "mode": "face", "confidence": 0.7},
+                "input": "data/input",
+                "finished": 100,
+                "options": {
+                    "engine": "bqat",
+                    "mode": "face",
+                    "confidence": 0.7,
+                },
                 "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
                 "status": 1,
                 "eta": 7200,
             }
         }
+    )
 
 
 class CollectionLog(Document):
     collection: str
     options: dict = Field(...)
-    created: datetime = Field(default_factory=datetime.utcnow)
+    created: datetime = Field(default_factory=datetime.now)
     modified: datetime = created
     samples: int = 0
 
     class Settings:
         name = "datasets"
 
-    class Config:
-        schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
                 "options": {"engine": "default", "mode": "face", "confidence": 0.7},
             }
         }
+    )
 
 
 class SampleLog(Document):
@@ -369,37 +562,34 @@ class SampleLog(Document):
         name = "samples"
         bson_encoders = {UUID: str}
 
-    @validator("path")
+    @field_validator("path")
+    @classmethod
     def path_must_exist(cls, path):
         if not os.path.exists(path):
-            raise ValueError(f"'{path}' not existed")
+            raise ValueError(f"'{path}' not exist")
         return path
 
 
 class EditCollectionLog(BaseModel):
-    collection: Optional[str]
-    modified: Optional[datetime]
-    files: Optional[List[str]]
-
-    class Config:
-        schema_extra = {
+    collection: Optional[str] = None
+    modified: Optional[datetime] = None
+    files: Optional[List[str]] = None
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
-                "samples": [
-                    "data/input/106242334_1.jpg",
-                    "data/input/108349477_1.jpg",
-                    "data/input/109172267_1.jpg",
-                ]
+                "samples": 100,
             }
         }
+    )
 
 
 class TaskQueue(BaseModel):
     total: int
     done: int = 0
-    eta: float = 0.0
-
-    class Config:
-        schema_extra = {"example": {"total": 100, "done": 45, "eta": 7200}}
+    eta: int = 0
+    model_config = ConfigDict(
+        json_schema_extra={"example": {"total": 100, "done": 45, "eta": 7200}}
+    )
 
 
 # def ResponseModel(data, message):

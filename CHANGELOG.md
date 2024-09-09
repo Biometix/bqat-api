@@ -1,3 +1,35 @@
+<a name="v1.4.0"></a>
+
+# v1.4.0 (2024-09-09)
+
+## 🚀 Features
+
+- Support OFIQ engine
+
+- Add engine selection flag
+
+- Add preprocessing flag
+
+- Support image resizing
+
+- Support image conversion
+
+- Add reporting flag
+
+- Add outlier detection flag
+
+- Support BQAT-GUI integration
+
+- Refactor task control endpoints
+
+- Add simple input data preview page
+
+- Support JP2, WSQ image preview
+
+## ⚙️ Miscellaneous Tasks
+
+- Migrate to Pydantic V2
+
 <a name="v1.3.0"></a>
 
 # v1.3.0 (2023-12-15)
