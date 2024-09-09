@@ -1,44 +1,22 @@
-FROM ubuntu:22.04 AS build
+FROM ubuntu:jammy AS build
 
-SHELL ["/bin/bash", "-c"] 
+SHELL ["/bin/bash", "-c"]
 
-## BIQT ##
-ARG QUIRK_STRIP_QT5CORE_METADATA=ON
-ENV QUIRK_STRIP_QT5CORE_METADATA ${QUIRK_STRIP_QT5CORE_METADATA}
+WORKDIR /app
 
-ARG WITH_BIQT_FACE=ON
-ENV WITH_BIQT_FACE ${WITH_BIQT_FACE}
-
-ARG WITH_BIQT_IRIS=ON
-ENV WITH_BIQT_IRIS ${WITH_BIQT_IRIS}
-
-ARG WITH_BIQT_CONTACT_DETECTOR=ON
-ENV WITH_BIQT_CONTACT_DETECTOR ${WITH_BIQT_CONTACT_DETECTOR}
+# COPY bqat/core/bqat_core/misc/BIQT-Iris /app/biqt-iris/
 
 RUN set -e && \
     apt update && \
     apt upgrade -y; \
-    DEBIAN_FRONTEND=noninteractive apt -y install git less vim cmake g++ curl libopencv-dev libjsoncpp-dev pip && \
-    pip install wheel; \
-    if [[ "${WITH_BIQT_FACE}" == "ON" ]]; then \
-    set -e; \
-    echo "Installing QT5 for BIQT Face."; \
-    DEBIAN_FRONTEND=noninteractive apt -y install qtbase5-dev; \
-    if  [ "${QUIRK_STRIP_QT5CORE_METADATA}" == "ON" ]; then \
-    echo "Stripping libQt5Core.so of its ABI metadata."; \
+    DEBIAN_FRONTEND=noninteractive apt -y install git less vim g++ curl libopencv-dev libjsoncpp-dev qtbase5-dev && \
+    apt -y install build-essential libssl-dev libdb-dev libdb++-dev libopenjp2-7 libopenjp2-tools libpcsclite-dev libssl-dev libopenjp2-7-dev libjpeg-dev libpng-dev libtiff-dev zlib1g-dev libopenmpi-dev libdb++-dev libsqlite3-dev libhwloc-dev libavcodec-dev libavformat-dev libswscale-dev; \
     strip --remove-section=.note.ABI-tag /usr/lib/x86_64-linux-gnu/libQt5Core.so; \
-    fi; \
-    fi;
-
-ARG BIQT_COMMIT=master
-ENV BIQT_COMMIT ${BIQT_COMMIT}
-
-# Clone and install BIQT from MITRE Github.
-RUN set -e; \
-    echo "BIQT_COMMIT=${BIQT_COMMIT}" ; \
+    curl -L -O https://github.com/Kitware/CMake/releases/download/v3.29.1/cmake-3.29.1-linux-x86_64.sh; \
+    chmod +x cmake*.sh; mkdir /opt/cmake; ./cmake*.sh --prefix=/opt/cmake --skip-license; ln -s /opt/cmake/bin/cmake /usr/local/bin/cmake;\
     mkdir /app 2>/dev/null || true; \
     cd /app; \
-    git clone --verbose https://github.com/mitre/biqt --branch "${BIQT_COMMIT}" biqt-pub; \
+    git clone --verbose https://github.com/mitre/biqt --branch master biqt-pub; \
     export NUM_CORES=$(cat /proc/cpuinfo | grep -Pc "processor\s*:\s*[0-9]+\s*$"); \
     echo "Builds will use ${NUM_CORES} core(s)."; \
     cd /app/biqt-pub; \
@@ -47,53 +25,14 @@ RUN set -e; \
     cmake -DBUILD_TARGET=UBUNTU -DCMAKE_BUILD_TYPE=Release -DWITH_JAVA=OFF ..; \
     make -j${NUM_CORES}; \
     make install; \
-    source /etc/profile.d/biqt.sh
-
-ARG BIQT_IRIS_COMMIT=master
-ENV BIQT_IRIS_COMMIT ${BIQT_IRIS_COMMIT}
-
-# Stage 2: BIQT Iris
-COPY bqat/bqat_core/misc/BIQT-IRIS /app/biqt-iris/
-
-# RUN if [ "${WITH_BIQT_IRIS}" == "ON" ]; then \
-RUN source /etc/profile.d/biqt.sh; \
-    export NUM_CORES=$(cat /proc/cpuinfo | grep -Pc "processor\s*:\s*[0-9]+\s*$"); \
-    echo "Builds will use ${NUM_CORES} core(s)."; \
+    source /etc/profile.d/biqt.sh; \
+    cd /app; git clone https://github.com/mitre/biqt-iris.git; \
     cd /app/biqt-iris; \
     mkdir build; \
     cd build; \
     cmake -DBIQT_HOME=/usr/local/share/biqt -DCMAKE_BUILD_TYPE=Release ..; \
     make -j${NUM_CORES}; \
-    make install;
-    # else \
-    # echo "Skipping BIQT Iris."; \
-    # fi;
-
-# RUN set -e; \
-#     if [ "${WITH_BIQT_IRIS}" == "ON" ]; then \
-#     echo "BIQT_IRIS_COMMIT: ${BIQT_IRIS_COMMIT}"; \
-#     source /etc/profile.d/biqt.sh; \
-#     ( mkdir /app 2>/dev/null || true ); \
-#     cd /app; \
-#     git clone --verbose https://github.com/mitre/biqt-iris --branch "${BIQT_IRIS_COMMIT}" biqt-iris; \
-#     export NUM_CORES=$(cat /proc/cpuinfo | grep -Pc "processor\s*:\s*[0-9]+\s*$"); \
-#     echo "Builds will use ${NUM_CORES} core(s)."; \
-#     cd /app/biqt-iris; \
-#     mkdir build; \
-#     cd build; \
-#     cmake -DCMAKE_BUILD_TYPE=Release ..; \
-#     make -j${NUM_CORES}; \
-#     make install; \
-#     else \
-#     echo "Skipping BIQT Iris."; \
-#     fi;
-
-
-# Clone and install OpenBR from GitHub. 
-RUN set -e; \
-    if [ "${WITH_BIQT_FACE}" == "ON" ]; then \
-    echo "Using OpenSSL Configuration at ${OPENSSL_CONF}: `cat ${OPENSSL_CONF}`"; \
-    mkdir /app 2>/dev/null || true; \
+    make install; \
     cd /app; \
     git clone https://github.com/biometrics/openbr.git openbr || exit 5; \
     cd /app/openbr; \
@@ -104,33 +43,31 @@ RUN set -e; \
     export NUM_CORES=$(cat /proc/cpuinfo | grep -Pc "processor\s*:\s*[0-9]+\s*$"); \
     make -j${NUM_CORES}; \
     make install; \
-    else \
-    echo "Skipping OpenBR build for BIQT Face. BIQT Face not requested."; \
-    mkdir /opt/openbr || true; \
-    echo "WITH_BIQT_FACE was not set to ON so openbr not compiled and installed." > /opt/openbr/README; \
-    fi
-
-ARG BIQT_FACE_COMMIT=master
-ENV BIQT_FACE_COMMIT ${BIQT_FACE_COMMIT}
-# Clone and install BIQT Face from the MITRE github repository. 
-RUN set -e; \
-    source /etc/profile.d/biqt.sh; \
-    if [ "${WITH_BIQT_FACE}" == "ON" ]; then \
-    echo "BIQT_FACE_COMMIT: ${BIQT_FACE_COMMIT}"; \        
-    echo "Using OpenSSL Configuration at ${OPENSSL_CONF}: `cat ${OPENSSL_CONF}`"; \
-    mkdir /app 2>/dev/null || true; \
     cd /app; \
-    git clone https://github.com/mitre/biqt-face.git biqt-face --depth=1 --branch "${BIQT_FACE_COMMIT}"; \
+    git clone https://github.com/mitre/biqt-face.git biqt-face --depth=1 --branch master; \
     cd /app/biqt-face; \
     mkdir build; \
     cd build; \
     cmake -DCMAKE_BUILD_TYPE=Release -DOPENBR_DIR=/opt/openbr ..; \
     make -j${NUM_CORES}; \
     make install; \
-    else \
-    echo "Skipping BIQT Face."; \
-    fi;
+    cd /app; \
+    git clone --recursive https://github.com/usnistgov/NFIQ2.git; \
+    cd NFIQ2; \
+    git checkout 2a899239d3d72f302cad859145745e8703e32ab0; \
+    mkdir build; \
+    cd build; \
+    cmake .. -DCMAKE_CONFIGURATION_TYPES=Release; \
+    cmake --build . --config Release; \
+    cmake --install .
 
+RUN apt install -y python3-pip liblapack-dev; \
+    pip install conan cmake; \
+    cd /app; mkdir ofiq; cd ofiq; \
+    git clone https://github.com/BSI-OFIQ/OFIQ-Project.git; \
+    cd OFIQ-Project/scripts; \
+    chmod +x *.sh; \
+    ./build.sh
 
 # ARG BIQT_CONTACT_DETECTOR_COMMIT=master
 # ENV BIQT_CONTACT_DETECTOR_COMMIT ${BIQT_CONTACT_DETECTOR_COMMIT}
@@ -152,39 +89,13 @@ RUN set -e; \
 #     fi;
 
 
-RUN apt update && apt -y install cmake build-essential libssl-dev libdb-dev libdb++-dev libopenjp2-7 libopenjp2-tools libpcsclite-dev libssl-dev libopenjp2-7-dev libjpeg-dev libpng-dev libtiff-dev zlib1g-dev libopenmpi-dev libdb++-dev libsqlite3-dev libhwloc-dev libavcodec-dev libavformat-dev libswscale-dev; \
-    ( mkdir /app 2>/dev/null || true ); \
-    cd /app; \
-    git clone --recursive https://github.com/usnistgov/NFIQ2.git; \
-    cd NFIQ2; \
-    mkdir build; \
-    cd build; \
-    cmake .. -DCMAKE_CONFIGURATION_TYPES=Release; \
-    cmake --build . --config Release; \
-    cmake --install .
+FROM ubuntu:jammy AS release
 
+WORKDIR /app
 
-FROM ubuntu:22.04 AS release
-
-# SHELL ["/bin/bash", "-c"]
-
-RUN apt update && \
-    apt -y install curl g++ libopencv-core4.5d libopencv-highgui4.5d libopencv-imgcodecs4.5d libopencv-imgproc4.5d libjsoncpp25 libqt5xml5 libqt5sql5  libpython3.10 libopencv-objdetect4.5d libqt5widgets5 libopencv-ml4.5d libopencv-videoio4.5d libpython3.10-dev python3-distutils
-    # apt -y install sqlite-devel openssl-devel bzip2-devel libffi-devel xz-devel
-
-## BIQT ##
 COPY --from=build /usr/local /usr/local
 COPY --from=build /etc/profile.d/biqt.sh /etc/profile.d/biqt.sh
 COPY --from=build /opt/openbr /opt/openbr
-
-RUN if  [ "${QUIRK_STRIP_QT5CORE_METADATA}" == "ON" ]; then \
-    echo "Stripping libQt5Core.so of its ABI metadata."; \
-    strip --remove-section=.note.ABI-tag /usr/lib/x86_64-linux-gnu/libQt5Core.so; \
-    fi;
-
-
-## NFIQ2 ##
-WORKDIR /app
 
 COPY --from=build /usr/lib /usr/lib
 
@@ -195,25 +106,28 @@ ENV MPLCONFIGDIR=/app/temp
 # ENV RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 ENV RAY_DISABLE_DOCKER_CPU_WARNING=1
 
-COPY bqat/bqat_core/misc/haarcascade_smile.xml bqat_core/misc/haarcascade_smile.xml
-
+COPY bqat/bqat_core/misc/BQAT/haarcascade_smile.xml bqat_core/misc/haarcascade_smile.xml
 COPY bqat/bqat_core/misc/NISQA/conda-lock.yml .
-
 COPY bqat/bqat_core/misc/NISQA /app/
-
-RUN curl -L -O "https://github.com/conda-forge/miniforge/releases/download/23.1.0-4/Mambaforge-$(uname)-$(uname -m).sh" && \
-    ( echo yes ; echo yes ; echo mamba ; echo yes ) | bash Mambaforge-$(uname)-$(uname -m).sh
-ENV PATH=/app/mamba/bin:${PATH}
-RUN mamba install --channel=conda-forge --name=base conda-lock=1.4 && \
-    conda-lock install --name nisqa conda-lock.yml && \
-    mamba clean -afy
-
+COPY bqat/bqat_core/misc/OFIQ /app/OFIQ/
 COPY Pipfile /app/
 
-RUN python3 -m pip install --upgrade pip && \
+COPY tests /app/tests/
+
+ENV PATH=/app/mamba/bin:${PATH}
+RUN apt update && apt -y install curl ca-certificates libblas-dev liblapack-dev; curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-$(uname)-$(uname -m).sh" && \
+    ( echo yes ; echo yes ; echo mamba ; echo yes ) | bash Mambaforge-$(uname)-$(uname -m).sh && \
+    mamba install --channel=conda-forge --name=base conda-lock=1.4 && \
+    conda-lock install --name nisqa conda-lock.yml && \
+    mamba clean -afy && \
+    useradd assessor && chown -R assessor /app && \
     python3 -m pip install pipenv && \
-    pipenv lock --dev && \
-    pipenv requirements --dev > requirements.txt && \
+    pipenv lock; \
+    if [ "${DEV}" == "true" ]; \
+    then pipenv requirements --dev > requirements.txt; \
+    else pipenv requirements > requirements.txt; \
+    fi; \
+    python3 -m pip uninstall -y pipenv && \
     python3 -m pip install -r requirements.txt
 
 # RUN mkdir -p /root/.deepface/weights && \
@@ -222,14 +136,16 @@ RUN python3 -m pip install --upgrade pip && \
 #     wget https://github.com/serengil/deepface_models/releases/download/v1.0/gender_model_weights.h5 -P /root/.deepface/weights/ && \
 #     wget https://github.com/serengil/deepface_models/releases/download/v1.0/race_model_single_batch.h5 -P /root/.deepface/weights/
 
-# RUN useradd assessor
-# RUN chown -R assessor /app
-# USER assessor
+USER assessor
 
 RUN mkdir data
 
 COPY bqat bqat/
 COPY api api/
+
+COPY --from=build /app/ofiq/OFIQ-Project/install_x86_64_linux/Release/bin ./OFIQ/bin
+COPY --from=build /app/ofiq/OFIQ-Project/install_x86_64_linux/Release/lib ./OFIQ/lib
+COPY --from=build /app/ofiq/OFIQ-Project/data/models ./OFIQ/models
 
 ARG VER_CORE
 ARG VER_API

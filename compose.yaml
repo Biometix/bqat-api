@@ -1,7 +1,5 @@
-version: '3.9'
-
 volumes:
-  db_mongo:
+  mongo:
 
 
 services:
@@ -12,11 +10,9 @@ services:
 
   mongo:
     image: mongo:latest
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: admin
+    command: [--noauth]
     volumes:
-      - db_mongo:/data/db
+      - mongo:/data/db
 
   mongo-express:
     image: mongo-express:latest
@@ -27,7 +23,7 @@ services:
     depends_on:
       - server
     environment:
-      ME_CONFIG_MONGODB_URL: mongodb://root:admin@mongo:27017/
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/
       ME_CONFIG_SITE_COOKIESECRET: 'cookiesecret'
       ME_CONFIG_SITE_SESSIONSECRET: 'sessionsecret'
 
@@ -35,7 +31,8 @@ services:
     image: bqat-api:latest
     build:
       context: .
-      # args:
+      args:
+        - DEV=true
       #   - VER_CORE=value
       #   - VER_API=value
     shm_size: 8gb
@@ -46,11 +43,12 @@ services:
       - redis
     environment:
       DEBUG_MODE: YES
-      MGO_URL: mongodb://root:admin@mongo:27017/
+      MGO_URL: mongodb://mongo:27017/
       SCAN_DB: scan
       LOG_DB: log
       RDS_URL: redis://redis:6379/
       QUEUE_DB: 10
+      DATA: data/
     volumes:
       - ./data:/app/data
       - ./api:/app/api
