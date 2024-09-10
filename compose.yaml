@@ -1,7 +1,5 @@
-version: '3.9'
-
 volumes:
-  db_mongo:
+  mongo:
 
 
 services:
@@ -12,17 +10,14 @@ services:
 
   mongo:
     image: mongo:latest
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: admin
+    command: [--noauth]
     volumes:
-      - db_mongo:/data/db
+      - mongo:/data/db
 
   server:
     image: ghcr.io/biometix/bqat-api:latest
     build:
       context: https://github.com/Biometix/bqat-api.git
-      shm_size: '8gb'
     shm_size: '8gb'
     ports:
       - 8848:8848

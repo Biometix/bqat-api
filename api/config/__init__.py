@@ -1,18 +1,36 @@
-from pydantic import BaseSettings
+import os
+
+from pydantic_settings import BaseSettings
 
 
 class CommonSettings(BaseSettings):
     APP_NAME: str = "BQAT-API"
-    APP_VERSION: str = "1.3.0-beta"
+    APP_VERSION: str = "1.4.0-beta"
     SUMMARY: str = "BQAT-API provides BQAT functionalities via web APIs. 🚀"
     DESCRIPTION: str = """
 ## Basic Workflow
 
-1. Create a scan task with your input dataset, the dataset could come from local `data/` folder (__POST /scan/__) or uploaded via the HTTP request (__POST /scan/uploaded__).
-2. Note down the task id (`tid`) from the response, and check the status of this task with (__GET /task/{task id}/__).
-3. Retrieve the results using dataset id (`collection` id from response above) from the server (__GET /scan/{dataset id}/profiles__).
+1. Create a scan task:
 
-## Post Process
+- Create a scan task from the local input folder: (__POST /scan/local__)
+- **OR** Create a scan task with files uploaded via HTTP request: (__POST /scan/remote__)
+
+2. Check task status:
+
+- Use (__GET /task/{task_id}/__) to monitor the status of the scan task.
+
+3. Retrieve scan results:
+
+- Once completed, use the dataset id (`collection` id from the scan response) to fetch profiles: (__GET /scan/{dataset_id}/profiles/__)
+
+## Pre-process
++ Preprocess images for scaning:
+
+    1. __POST /scan/preprocess__
+    2. __GET /scan/preprocess/{task_id}__
+
+    
+## Post-process
 + Generate statistical report for the results:
     1. __POST /scan/{dataset id}/report/generate__
     2. __GET /scan/{dataset id}/report__
@@ -28,6 +46,7 @@ class CommonSettings(BaseSettings):
 class ServerSettings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8848
+    WEB: str = "http://localhost:5173"
 
 
 class DatabaseSettings(BaseSettings):
@@ -36,8 +55,9 @@ class DatabaseSettings(BaseSettings):
     LOG_DB: str
     RDS_URL: str
     QUEUE_DB: str
-    TEMP: str = "temp/"
+    TEMP: str = "/tmp/bqat/"
 
 
 class Settings(CommonSettings, ServerSettings, DatabaseSettings):
-    pass
+    DATA: str = "data/"
+    # CPU_RESERVE: int = 2

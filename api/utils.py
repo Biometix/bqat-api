@@ -1,19 +1,32 @@
+import asyncio
+import csv
 import glob
 import hashlib
 import json
 import os
-import platform
+import pickle
+import re
 import shutil
 import subprocess
 import time
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import ray
+
+# import wsq
+from beanie import PydanticObjectId
+from bson.binary import Binary
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pandas_profiling import ProfileReport
+from PIL import Image, ImageOps
+from pymongo import UpdateOne
 from pyod.models.cblof import CBLOF
 from pyod.models.copod import COPOD
+
+# from pyod.models.deep_svdd import DeepSVDD
+# from pyod.models.dif import DIF
 from pyod.models.ecod import ECOD
 from pyod.models.iforest import IForest
 from pyod.models.knn import KNN
@@ -22,17 +35,26 @@ from redis.asyncio.client import Redis
 from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn
 
 from api.config import Settings
-from api.config.models import CollectionLog, Status, TaskQueue
-from bqat.bqat_core import __name__, __version__, scan
-
-DETECTORS = ("ECOD", "CBLOF", "IForest", "KNN", "COPOD", "PCA")
+from api.config.models import (
+    CollectionLog,
+    # DetectorOptions,
+    # ReportLog,
+    Status,
+    TaskQueue,
+)
+from bqat.bqat_core import __name__, __version__
+from bqat.bqat_core import scan as process
 
 
 @ray.remote
 def scan_task(path, options):
     try:
-        result = scan(path, **options)
-        result.update({"tag": get_tag(result["file"])})
+        if options.get("engine") == "ofiq" and options.get("type") == "folder":
+            print(f">>>> Scanning folder {path}")
+            return process(path, **options)
+        else:
+            result = process(path, **options)
+            result.update({"tag": get_tag(result.get("file", path))})
     except Exception as e:
         print(f">>>> File scan error: {str(e)}")
         log = {"file": path, "error": str(e)}
@@ -62,149 +84,584 @@ def outlier_detection_task(data, options):
     return outliers
 
 
+@ray.remote
+def preprocess_task(file: str, output: dir, config: dict) -> None:
+    try:
+        import wsq
+        # name=file.split("/")[-1].split(".")[0]
+        file = Path(file)
+        pattern = config.get("pattern", None)
+        
+        if pattern and not file.match(f"*{pattern}{file.suffix}"):
+            print(f">>>> File {file} does not match pattern {pattern}{file.suffix}")
+            return
+        else:
+            print(f">>>> Preprocessing {file}")
+        if not Path(output).exists():
+            Path(output).mkdir(parents=True, exist_ok=True)
+        with Image.open(file) as img:
+            match config.get("mode", "rgb"):
+                case "rgb":
+                    img = img.convert("RGB")
+                case "rgba":
+                    img = img.convert("RGBA")
+                case "grayscale" | "greyscale":
+                    img = ImageOps.grayscale(img)
+                    # img = img.convert("L")
+                case "hsv":
+                    img = img.convert("HSV")
+                case "cmyk":
+                    img = img.convert("CMYK")
+                case "ycbcr":
+                    img = img.convert("YCbCr")
+                case "bw":
+                    img = img.convert("1")
+                case _:
+                    img = img.convert("RGB")
+
+            if width := config.get("width", False):
+                height = int(width * img.height / img.width)
+                img = img.resize((width, height))
+            if frac := config.get("frac", False):
+                img = img.resize((int(img.width * frac), int(img.height * frac)))
+
+            if target := config.get("target", False):
+                processed = Path(output) / file.parent.relative_to(Settings().DATA) / f"{file.stem}.{target}"
+            else:
+                processed = Path(output) / file.parent.relative_to(Settings().DATA) / file.name
+            if not processed.parent.exists():
+                processed.parent.mkdir(parents=True, exist_ok=True)
+            if target=='wsq':
+                img = ImageOps.grayscale(img)
+            img.save(processed)
+    except Exception as e:
+        print(f">>>> Preprocess task error: {str(e)}")
+
+
 async def run_scan_tasks(
-    scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase, queue: Redis
+    scan: AsyncIOMotorDatabase,
+    log: AsyncIOMotorDatabase,
+    queue: Redis,
+    task_id: str | None = None,
 ) -> None:
-    tasks = await log["tasks"].find({"status": {"$lt": 2}}).to_list(length=None)
+    if task_id:
+        tasks = await log["tasks"].find({"tid": task_id}).to_list(length=None)
+    else:
+        tasks = await log["tasks"].find({"status": {"$lt": 2}}).to_list(length=None)
+
     for task in tasks:
         tid = str(task.get("tid"))
         await queue.lpush("task_queue", tid)
         if not await queue.exists(tid):
-            await queue.set(tid, json.dumps(TaskQueue(total=task.get("input")).dict()))
-
-    task_timer = time.time()
-    file_count = 0
-    tasks = []
+            await queue.set(
+                tid,
+                TaskQueue(
+                    total=task.get("total"), done=task.get("finished")
+                ).model_dump_json(),
+            )
 
     while await queue.llen("task_queue") > 0:
+        task_timer = time.time()
+        file_count = 0
+        tasks = []
+
         tid = (await queue.lrange("task_queue", -1, -1))[0]
+        if not tid:
+            continue
+        await queue.lrem("task_queue", 1, tid)
         task = await log["tasks"].find_one({"tid": tid})
         options = task.get("options")
         collection = task.get("collection")
-        pending = [
-            sample["path"]
-            for sample in await log["samples"]
-            .find({"tid": tid, "status": 0})
-            .to_list(length=None)
-        ]
 
         if task.get("status") == Status.new:
             if not await log["datasets"].find_one({"collection": collection}):
                 await CollectionLog(collection=collection, options=options).create()
 
-        task = await log["tasks"].find_one_and_update(
-            {"tid": tid}, {"$set": {"status": 1}}
-        )
-        with Progress(
-            SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
-        ) as p:
-            task_progress = p.add_task("[cyan]Sending task...", total=len(pending))
-            for file in pending:
-                tasks.append(scan_task.remote(file, options))
-                file_count += 1
-                p.update(task_progress, advance=1)
-                if p.finished:
-                    break
+        # Split folder scan
+        if options.get("engine") == "ofiq" and options.get("type") != "folder":
+            pending = [
+                sample["path"]
+                for sample in await log["samples"]
+                .find({"tid": tid, "status": 0})
+                .to_list(length=None)
+            ]
+            options["type"] = "folder"
 
-        step = 100
-        counter = 0
-        with Progress(
-            SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
-        ) as p:
-            task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
-            while not p.finished:
-                scan_timer = time.time()
-                if len(tasks) < step:
-                    ready = tasks
-                    results = ray.get(tasks)
-                    not_ready = []
-                else:
-                    ready, not_ready = ray.wait(tasks, num_returns=step, timeout=3)
-                    results = ray.get(ready)
-                if not results:
-                    break
-                counter += len(ready)
-                await scan[collection].insert_many(results)
-                files = [entry["file"] for entry in results]
-                scan_timer = time.time() - scan_timer
-                p.update(task_progress, advance=len(files))
-                task = await log["tasks"].find_one_and_update(
-                    {"tid": tid},
-                    {"$inc": {"elapse": scan_timer, "finished": len(files)}},
-                )
-                await log["datasets"].find_one_and_update(
-                    {"collection": collection},
-                    {
-                        # "$set": {"modified": datetime.now()},
-                        "$currentDate": {"modified": True},
-                        "$inc": {"samples": len(files)},
-                    },
-                )
-                # for file in files:
-                #     await log["samples"].find_one_and_update(
-                #         {
-                #             "tid": tid,
-                #             "path": file
-                #         },
-                #         {
-                #             "$set": { "status": 2 }
-                #         }
-                #     )
-                elapse = task.get("elapse") + scan_timer
-                status = json.loads(await queue.get(tid))
-                status["done"] += len(files)
-                throughput = status["done"] / elapse
-                eta = (status["total"] - status["done"]) / throughput
-                status["eta"] = eta
-                t_min, t_sec = divmod(eta, 60)
-                t_hr, t_min = divmod(t_min, 60)
-                print(f">> Finished: {counter}")
-                print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
-                print(f">> Throughput: {throughput:.2f} items/s\n")
-                await queue.set(tid, json.dumps(status))
-                tasks = not_ready
+            task = await log["tasks"].find_one_and_update(
+                {"tid": tid}, {"$set": {"status": 1}}
+            )
 
-        task = await log["tasks"].find_one({"tid": tid})
-        if task and (task.get("input") <= task.get("finished")):
+            with Progress(
+                SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
+            ) as p:
+                task_progress = p.add_task(
+                    "[cyan]Executing task...", total=task.get("total")
+                )
+                for folder in pending:
+                    batch_start = time.time()
+                    batch_task = [scan_task.remote(folder, options)]
+                    await log["tasks"].find_one_and_update(
+                        {"tid": tid},
+                        {
+                            "$set": {
+                                "status": 1,
+                                "task_refs": [Binary(pickle.dumps(batch_task[0]))],
+                            }
+                        },
+                    )
+                    batch = len(get_files(folder))
+                    print(f">> Batch size: {batch}")
+                    try:
+                        ready, not_ready = ray.wait(batch_task, timeout=1)
+                        while not_ready:
+                            await asyncio.sleep(3)
+                            ready, not_ready = ray.wait(not_ready, timeout=0.1)
+                            print(f"{datetime.now()}: processing...")
+                        outputs = ray.get(batch_task)
+                        await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$set": {
+                                    "status": 2,
+                                    "task_refs": [],
+                                }
+                            },
+                        )
+                    except ray.exceptions.TaskCancelledError:
+                        print(f"Task was cancelled: {tid}")
+                        await log["tasks"].find_one_and_update(
+                            {"tid": task["tid"]},
+                            {
+                                "$set": {
+                                    "task_refs": [],
+                                    "status": 0,
+                                },
+                            },
+                        )
+                        await queue.delete(tid)
+                        return
+                    batch_count = 0
+                    for output in outputs:
+                        result_list = output.get("results", [])
+                        for result in result_list:
+                            file_count += 1
+                            batch_count += 1
+                            await scan[collection].insert_one(result)
+                    await log["samples"].find_one_and_update(
+                        {"tid": tid, "path": folder},
+                        {
+                            "$set": {
+                                "status": 2,
+                                "task_refs": [],
+                                "modified": datetime.now(),
+                            }
+                        },
+                    )
+                    p.update(task_progress, advance=batch_count)
+                    batch_timer = time.time() - batch_start
+                    task = await log["tasks"].find_one_and_update(
+                        {"tid": tid},
+                        {"$inc": {"elapse": batch_timer, "finished": batch_count}},
+                    )
+                    await log["datasets"].find_one_and_update(
+                        {"collection": collection},
+                        {
+                            # "$set": {"modified": datetime.now()},
+                            "$currentDate": {"modified": True},
+                            "$inc": {"samples": batch_count},
+                        },
+                    )
+                    elapse = (
+                        task["elapse"]
+                        if task["elapse"] > 0
+                        else batch_timer
+                        if batch_timer > 0
+                        else 1
+                    )
+                    status = json.loads(await queue.get(tid))
+                    status["done"] += batch_count
+                    throughput = status["done"] / elapse
+                    eta = (status["total"] - status["done"]) / throughput
+                    status["eta"] = int(eta)
+                    t_min, t_sec = divmod(eta, 60)
+                    t_hr, t_min = divmod(t_min, 60)
+                    print(f">> Finished: {status['done']} / {task.get('total')}")
+                    print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                    print(f">> Throughput: {throughput:.2f} items/s\n")
+                    await queue.set(tid, json.dumps(status))
+
+                    shutil.rmtree(folder)
+
+                    if p.finished:
+                        break
+
             await log["tasks"].find_one_and_update(
-                {"tid": tid}, {"$set": {"status": 2}}
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 2,
+                        "task_refs": [],
+                        "modified": datetime.now(),
+                    }
+                },
             )
             await queue.rpop("task_queue")
             await queue.delete(tid)
             await log["samples"].delete_many({"tid": tid})
 
+        # Whole folder scan
+        elif options.get("mode") == "speech" or options.get("type") == "folder":
+            input_folder = (await log["samples"].find_one({"tid": tid, "status": 0}))[
+                "path"
+            ]
+            file_total = task.get("total")
+
+            if options.get("mode") == "speech":
+                dir_list = [
+                    str(i) + "/"
+                    for i in Path(input_folder).rglob("*")
+                    if (i.is_dir() and len(list(i.glob("*.[Ww][Aa][Vv]"))) > 0)
+                ]
+                if len(list(Path(input_folder).glob("*.[Ww][Aa][Vv]"))) > 0:
+                    dir_list.append(input_folder)
+
+            elif options.get("type") == "folder":
+                accepted_types = ["jpg", "jpeg", "png", "bmp", "wsq", "jp2"]
+
+                dir_list = [
+                    str(i) + "/"
+                    for i in Path(input_folder).rglob("*")
+                    if i.is_dir()
+                    and any(list(i.glob(f"*.{ext}")) for ext in accepted_types)
+                ]
+
+                if any(list(Path(input_folder).glob(f"*.{ext}")) for ext in accepted_types):
+                    dir_list.append(input_folder)
+
+            else:
+                dir_list = [str(i) for i in Path(input_folder).rglob("*") if i.is_dir()]
+                dir_list.append(input_folder)
+
+            for input_folder in dir_list:
+                subtasks=[]
+                file_total = len(list(Path(input_folder).glob("*.*")))
+                with Progress(
+                    SpinnerColumn(),
+                    MofNCompleteColumn(),
+                    *Progress.get_default_columns(),
+                ) as p:
+                    task_progress = p.add_task("[purple]Sending...", total=file_total)
+                    subtasks.append(
+                        scan_task.remote(
+                            input_folder,
+                            options,
+                        )
+                    )
+                    await log["tasks"].find_one_and_update(
+                        {"tid": tid},
+                        {
+                            "$set": {
+                                "status": 1,
+                                "task_refs": [
+                                    Binary(pickle.dumps(task)) for task in subtasks
+                                ],
+                            }
+                        },
+                    )
+                    p.update(task_progress, completed=file_total)
+
+                with Progress(
+                    SpinnerColumn(),
+                    MofNCompleteColumn(),
+                    *Progress.get_default_columns(),
+                ) as p:
+                    task_progress = p.add_task(
+                        "[purple]Finalising...", total=file_total
+                    )
+                    try:
+                        ready, not_ready = ray.wait(subtasks, timeout=3)
+                        while not_ready:
+                            await asyncio.sleep(10)
+                            ready, not_ready = ray.wait(not_ready, timeout=3)
+                            print(f"{datetime.now()}: processing...")
+                        outputs = ray.get(subtasks)
+                    except ray.exceptions.TaskCancelledError:
+                        print(f"Task was cancelled: {tid}")
+                        await log["tasks"].find_one_and_update(
+                            {"tid": task["tid"]},
+                            {
+                                "$set": {
+                                    "task_refs": [],
+                                    "status": 0,
+                                },
+                            },
+                        )
+                        await queue.delete(tid)
+                        return
+                    for output in outputs:
+                        result_list = output.get("results", [])
+                        for result in result_list:
+                            file_count += 1
+                            await scan[collection].insert_one(result)
+                            p.update(task_progress, advance=1)
+                            if p.finished:
+                                break
+
+                    p.update(task_progress, completed=file_total)
+
+            scan_timer = time.time() - task_timer
+            task = await log["tasks"].find_one_and_update(
+                {"tid": tid},
+                {"$inc": {"elapse": scan_timer, "finished": file_count}},
+            )
+            await log["datasets"].find_one_and_update(
+                {"collection": collection},
+                {
+                    # "$set": {"modified": datetime.now()},
+                    "$currentDate": {"modified": True},
+                    "$inc": {"samples": file_count},
+                },
+            )
+
+            await log["tasks"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 2,
+                        "task_refs": [],
+                        "modified": datetime.now(),
+                    }
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            await log["samples"].delete_many({"tid": tid})
+
+        # Individual file scan
+        else:
+            pending = [
+                sample["path"]
+                for sample in await log["samples"]
+                .find({"tid": tid, "status": 0})
+                .to_list(length=None)
+            ]
+
+            task = await log["tasks"].find_one_and_update(
+                {"tid": tid}, {"$set": {"status": 1}}
+            )
+            with Progress(
+                SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
+            ) as p:
+                task_progress = p.add_task("[cyan]Sending task...", total=len(pending))
+                for file in pending:
+                    tasks.append(scan_task.remote(file, options))
+                    file_count += 1
+                    p.update(task_progress, advance=1)
+                    if p.finished:
+                        break
+            await log["tasks"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 1,
+                        "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
+                    }
+                },
+            )
+
+            step = 100
+            counter = 0
+            with Progress(
+                SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
+            ) as p:
+                task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
+                while not p.finished:
+                    scan_timer = time.time()
+                    await asyncio.sleep(3)
+                    try:
+                        if len(tasks) < step:
+                            ready = tasks
+                            results = ray.get(tasks)
+                            not_ready = []
+                        else:
+                            ready, not_ready = ray.wait(
+                                tasks,
+                                num_returns=step,
+                                timeout=0.1,
+                            )
+                            while not ready and not_ready:
+                                ready, not_ready = ray.wait(
+                                    tasks,
+                                    num_returns=step,
+                                    timeout=0.1,
+                                )
+                                step -= int(0.2 * step)
+                                if step < 1:
+                                    step = 1
+                            results = ray.get(ready)
+                    except ray.exceptions.TaskCancelledError:
+                        print(f"Task was cancelled: {tid}")
+                        await log["tasks"].find_one_and_update(
+                            {"tid": task["tid"]},
+                            {
+                                "$set": {
+                                    "task_refs": [],
+                                    "status": 1,
+                                },
+                            },
+                        )
+                        await queue.delete(tid)
+                        return
+                    if not results:
+                        break
+                    step += int(0.2 * step)
+                    counter += len(ready)
+
+                    await scan[collection].insert_many(results)
+                    files = [entry.get("file") for entry in results if "file" in entry]
+
+                    await log["samples"].bulk_write(
+                        [
+                            UpdateOne(
+                                {"tid": tid, "path": file},
+                                {
+                                    "$set": {
+                                        "status": 2,
+                                    }
+                                },
+                            )
+                            for file in files
+                        ]
+                    )
+
+                    scan_timer = time.time() - scan_timer
+                    p.update(task_progress, advance=len(files))
+                    task = await log["tasks"].find_one_and_update(
+                        {"tid": tid},
+                        {"$inc": {"elapse": scan_timer, "finished": len(files)}},
+                    )
+                    await log["datasets"].find_one_and_update(
+                        {"collection": collection},
+                        {
+                            # "$set": {"modified": datetime.now()},
+                            "$currentDate": {"modified": True},
+                            "$inc": {"samples": len(files)},
+                        },
+                    )
+                    elapse = task["elapse"] if task["elapse"] else 1
+                    status = json.loads(await queue.get(tid))
+                    status["done"] += len(files)
+                    throughput = status["done"] / elapse
+                    eta = (status["total"] - status["done"]) / throughput
+                    status["eta"] = int(eta)
+                    t_min, t_sec = divmod(eta, 60)
+                    t_hr, t_min = divmod(t_min, 60)
+                    print(f">> Finished: {counter}")
+                    print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                    print(f">> Throughput: {throughput:.2f} items/s\n")
+                    await queue.set(tid, json.dumps(status))
+                    tasks = not_ready
+
+            task = await log["tasks"].find_one({"tid": tid})
+            if task and (task.get("total") <= task.get("finished")):
+                pass
+            else:
+                await asyncio.sleep(3)
+
+            await log["tasks"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 2,
+                        "task_refs": [],
+                        "modified": datetime.now(),
+                    }
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            await log["samples"].delete_many({"tid": tid})
+        if options.get("temp"):
+            shutil.rmtree(task.get("input"))
+
+        task_timer = time.time() - task_timer
+        t_min, t_sec = divmod(task_timer, 60)
+        t_hr, t_min = divmod(t_min, 60)
+        print(f">> File count: {file_count}")
+        print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
+        print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+        print(f">> Collection: {collection}")
+
     if os.path.exists(Settings().TEMP):
         shutil.rmtree(Settings().TEMP)
-
-    task_timer = time.time() - task_timer
-    t_min, t_sec = divmod(task_timer, 60)
-    t_hr, t_min = divmod(t_min, 60)
-    print(f">> File count: {file_count}")
-    print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
-    print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
-    print(f">> Collection: {collection}")
-    print(">>> Finished <<<")
+    print(">>> Finished <<<\n")
 
 
 async def run_report_tasks(
-    scan: AsyncIOMotorDatabase, log: AsyncIOMotorDatabase
+    scan: AsyncIOMotorDatabase,
+    log: AsyncIOMotorDatabase,
+    queue: Redis,
+    task_id: str | None = None,
 ) -> None:
     tasks = []
-    for task in await log["reports"].find().to_list(length=None):
-        if not task.get("file_id"):
-            tasks.append(task)
+    if not task_id:
+        for task in await log["reports"].find().to_list(length=None):
+            if not task.get("file_id"):
+                tasks.append(task)
+    else:
+        tasks.append(await log["reports"].find_one({"tid": task_id}))
+
+    for task in tasks:
+        tid = str(task.get("tid"))
+        await queue.lpush("task_queue", tid)
 
     for task in tasks:
         task_timer = time.time()
         data = []
-        dataset_id = task.get("collection")
+
+        if isinstance(task.get("external_input"), str):
+            external = True
+            with open(task.get("external_input"), newline="") as f:
+                reader = csv.DictReader(f, delimiter=",")
+                data = list(reader)
+            dataset_id = task_id
+        else:
+            external = False
+            dataset_id = task.get("collection")
+            for doc in await scan[dataset_id].find().to_list(length=None):
+                doc.pop("_id")
+                data.append(doc)
+
         print(f">> Generate report: {dataset_id}")
-        for doc in await scan[dataset_id].find().to_list(length=None):
-            doc.pop("_id")
-            data.append(doc)
-        options = {"minimal": task.get("minimal"), "downsample": task.get("downsample")}
-        report = report_task.remote(data, options)
-        html_content = ray.get(report)
+
+        report = [report_task.remote(data, task.get("options"))]
+        await log["reports"].find_one_and_update(
+            {"tid": task["tid"]},
+            {
+                "$set": {
+                    "status": 1,
+                    "task_refs": [Binary(pickle.dumps(task)) for task in report],
+                },
+            },
+        )
+        try:
+            ready, not_ready = ray.wait(report, timeout=3)
+            while not_ready:
+                await asyncio.sleep(10)
+                ready, not_ready = ray.wait(not_ready, timeout=3)
+            html_content = ray.get(ready[0])
+        except ray.exceptions.TaskCancelledError:
+            print(f"Task was cancelled: {task['tid']}")
+            await log["reports"].find_one_and_update(
+                {"tid": task["tid"]},
+                {
+                    "$set": {
+                        "task_refs": [],
+                        "status": 0,
+                    },
+                },
+            )
+            return
         fs = AsyncIOMotorGridFSBucket(log)
         file_id = await fs.upload_from_stream(
             f"report_{dataset_id}",
@@ -213,12 +670,26 @@ async def run_report_tasks(
         )
         filename = (
             f"report_{dataset_id}_minimal"
-            if task.get("minimal")
+            if task["options"].get("minimal")
             else f"report_{dataset_id}"
         )
+
+        collection = str(task["tid"]) if external else dataset_id
         await log["reports"].find_one_and_update(
-            {"_id": task["_id"]}, {"$set": {"file_id": file_id, "filename": filename}}
+            {"tid": task["tid"]},
+            {
+                "$set": {
+                    "collection": collection,
+                    "file_id": str(file_id),
+                    "filename": filename,
+                    "modified": datetime.now(),
+                    "task_refs": [],
+                    "status": 2,
+                }
+            },
         )
+        await queue.rpop("task_queue")
+
         task_timer = time.time() - task_timer
         t_min, t_sec = divmod(task_timer, 60)
         t_hr, t_min = divmod(t_min, 60)
@@ -227,52 +698,284 @@ async def run_report_tasks(
 
 
 async def run_outlier_detection_tasks(
-    dataset_id: str,
-    options: dict,
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
+    queue: Redis,
+    task_id: str | None = None,
 ) -> None:
-    task_timer = time.time()
-    data = []
-    file = []
-    for doc in (
-        await scan[dataset_id].find().to_list(length=None)
-    ):  # TODO instead of reconstruct a dict list, make the query with required attributes
-        sample = {k: float(doc.get(k, 0)) for k in options["columns"]}
-        data.append(sample)
-        file.append(doc.get("file"))
+    if task_id:
+        tasks = [await log["outliers"].find_one({"tid": task_id})]
+    else:
+        tasks = await log["outliers"].find({"status": {"$lt": 2}}).to_list(length=None)
 
-    task = outlier_detection_task.remote(data, {"detector": options.get("detector")})
-    label, score = ray.get(task)
-    outliers = pd.DataFrame(
-        list(zip(file, label, score)), columns=["file", "label", "score"]
-    )
-    outliers = outliers[outliers["label"] == 1].drop(["label"], axis=1)
-    outliers["collection"] = dataset_id
-    await log["outliers"].insert_many(outliers.to_dict("records"))
+    for task in tasks:
+        tid = str(task.get("tid"))
+        await queue.lpush("task_queue", tid)
 
-    task_timer = time.time() - task_timer
-    t_min, t_sec = divmod(task_timer, 60)
-    t_hr, t_min = divmod(t_min, 60)
-    print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+    while await queue.llen("task_queue") > 0:
+        task_timer = time.time()
+        data = []
+        file = []
+
+        tid = (await queue.lrange("task_queue", -1, -1))[0]
+        if not tid:
+            continue
+        await queue.lrem("task_queue", 1, tid)
+        task = await log["outliers"].find_one({"tid": tid})
+        dataset_id = task.get("collection")
+        options = task.get("options")
+
+        for doc in (
+            await scan[dataset_id].find().to_list(length=None)
+        ):  # TODO instead of reconstruct a dict list, make the query with required attributes
+            sample = {k: float(doc.get(k, 0)) for k in options.get("columns")}
+            data.append(sample)
+            file.append(doc.get("file"))
+
+        tasks = [
+            outlier_detection_task.remote(data, {"detector": options.get("detector")})
+        ]
+
+        await log["outliers"].find_one_and_update(
+            {"tid": tid},
+            {
+                "$set": {
+                    "status": 1,
+                    "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
+                },
+            },
+        )
+        try:
+            ready, not_ready = ray.wait(tasks, timeout=3)
+            while not_ready:
+                await asyncio.sleep(10)
+                ready, not_ready = ray.wait(not_ready, timeout=3)
+            label, score = ray.get(ready[0])
+        except ray.exceptions.TaskCancelledError:
+            print(f"Task was cancelled: {tid}")
+            await log["outliers"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "task_refs": [],
+                        "status": 0,
+                    },
+                },
+            )
+            return
+
+        outliers = pd.DataFrame(
+            list(zip(file, label, score)), columns=["file", "label", "score"]
+        )
+        outliers = outliers[outliers["label"] == 1].drop(["label"], axis=1)
+        outliers["collection"] = dataset_id
+        await log["outliers"].find_one_and_update(
+            {"tid": tid},
+            {
+                "$set": {
+                    "outliers": outliers.to_dict("records"),
+                    "modified": datetime.now(),
+                    "task_refs": [],
+                    "status": 2,
+                },
+            },
+        )
+        await queue.rpop("task_queue")
+
+        task_timer = time.time() - task_timer
+        t_min, t_sec = divmod(task_timer, 60)
+        t_hr, t_min = divmod(t_min, 60)
+        print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+    print(">>> Finished <<<")
+
+
+async def run_preprocessing_tasks(
+    log: AsyncIOMotorDatabase,
+    queue: Redis,
+    task_id: str | None = None,
+) -> None:
+    if task_id:
+        tasks = [await log["preprocessings"].find_one({"tid": task_id})]
+    else:
+        tasks = (
+            await log["preprocessings"]
+            .find({"status": {"$lt": 2}})
+            .to_list(length=None)
+        )
+
+    for task in tasks:
+        tid = str(task.get("tid"))
+        await queue.lpush("task_queue", tid)
+
+    while await queue.llen("task_queue") > 0:
+        task_timer = time.time()
+        file_total = 0
+        file_count = 0
+        tasks = []
+        file_globs = []
+
+        tid = (await queue.lrange("task_queue", -1, -1))[0]
+        if not tid:
+            continue
+        await queue.lrem("task_queue", 1, tid)
+        task = await log["preprocessings"].find_one({"tid": tid})
+
+        slash = "" if task.get("source").endswith("/") else "/"
+        for ext in extend(task.get("input_format")):
+            file_total += len(
+                glob.glob(task.get("source") + f"{slash}**/*." + ext, recursive=True)
+            )
+        for ext in extend(task.get("input_format")):
+            file_globs.append(
+                glob.iglob(task.get("source") + f"{slash}**/*." + ext, recursive=True)
+            )
+        if not await queue.exists(tid):
+            await queue.set(tid, TaskQueue(total=file_total).model_dump_json())
+
+        output_dir = task.get("source") + "/" + tid
+        config = {
+            "frac": task["options"].get("scale"),
+            "width": task["options"].get("resize"),
+            "grayscale": task["options"].get("grayscale"),
+            "target": task["options"].get("convert"),
+            "pattern": task["options"].get("pattern"),
+        }
+
+        with Progress(
+            SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
+        ) as p:
+            task_progress = p.add_task("[cyan]Sending task...", total=file_total)
+            for files in file_globs:
+                for path in files:
+                    file_count += 1
+                    p.update(task_progress, advance=1)
+                    # Check if path name matches the pattern
+                    try:
+                        tasks.append(
+                            preprocess_task.remote(
+                                path,
+                                output_dir,
+                                config,
+                            )
+                        )
+                    except Exception as e:
+                        print(f"Preprocessing task failed: {e}")
+                    if p.finished:
+                        break
+                if p.finished:
+                    break
+            await log["preprocessings"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 1,
+                        "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
+                    },
+                },
+            )
+
+        eta_step = 100  # ETA estimation interval
+        counter = 0
+        ready, not_ready = ray.wait(tasks)
+
+        with Progress(
+            SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
+        ) as p:
+            task_progress = p.add_task("[cyan]Processing...\n", total=file_total)
+            while not p.finished:
+                scan_timer = time.time()
+                if len(not_ready) < eta_step:
+                    p.update(task_progress, completed=file_total)
+                    continue
+                tasks = not_ready
+
+                try:
+                    ready, not_ready = ray.wait(tasks, num_returns=eta_step, timeout=3)
+                except ray.exceptions.TaskCancelledError:
+                    print(f"Task was cancelled: {task['tid']}")
+                    await log["preprocessings"].find_one_and_update(
+                        {"tid": tid},
+                        {
+                            "$set": {
+                                "task_refs": [],
+                                "status": 0,
+                            },
+                        },
+                    )
+                    return
+                p.update(task_progress, advance=len(ready))
+                counter += len(ready)
+
+                scan_timer = time.time() - scan_timer
+                elapse = time.time() - task_timer
+                status = json.loads(await queue.get(tid))
+                status["done"] = counter
+                throughput = status["done"] / elapse
+                eta = (status["total"] - status["done"]) / throughput
+                status["eta"] = int(eta)
+                t_min, t_sec = divmod(eta, 60)
+                t_hr, t_min = divmod(t_min, 60)
+                print(f">> Finished: {counter}")
+                print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                print(f">> Throughput: {throughput:.2f} items/s\n")
+                await queue.set(tid, json.dumps(status))
+
+        ray.get(tasks)
+        print("Finished!")
+
+        task_timer = time.time() - task_timer
+        sc = task_timer
+        mn, sc = divmod(sc, 60)
+        hr, mn = divmod(mn, 60)
+        sc, mn, hr = int(sc), int(mn), int(hr)
+
+        await log["preprocessings"].find_one_and_update(
+            {"tid": tid},
+            {
+                "$set": {
+                    "target": output_dir,
+                    "modified": datetime.now(),
+                    "task_refs": [],
+                    "status": 2,
+                },
+            },
+        )
+        await queue.rpop("task_queue")
+        await queue.delete(tid)
+
+        print(f">> File count: {file_count}")
+        print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
+        print(f">> Process time: {int(hr)}h{int(mn)}m{int(sc)}s")
+        print(f">> Output: {output_dir}")
     print(">>> Finished <<<")
 
 
 async def run_test_tasks() -> str:
     out = subprocess.run(
-        ["python3.8", "-m", "pytest", "tests", "-v"], capture_output=True
+        ["python3", "-m", "pytest", "tests", "-v"], capture_output=True
     )
-    return out.stdout
+    return out.stdout.decode()
 
 
-def get_files(folder, ext=("jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav")) -> list:
+def get_files(
+    folder,
+    ext=["jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav"],
+    pattern=None,
+) -> list:
+    slash = "" if folder.endswith("/") else "/"
     file_globs = []
     files = []
-    for ext in extended(ext):
-        file_globs.append(glob.iglob(folder + "**/*." + ext, recursive=True))
-    for file_glob in file_globs:
-        for file in file_glob:
-            files.append(file)
+    if extended(ext):
+        for extention in extended(ext):
+            file_globs.append(
+                glob.iglob(folder + f"{slash}**/*." + extention, recursive=True)
+            )
+        for file_glob in file_globs:
+            for file in file_glob:
+                if pattern is None or re.search(
+                    pattern, file.split("/")[-1].split(".")[0]
+                ):
+                    files.append(file)
     return files
 
 
@@ -324,45 +1027,72 @@ def get_md5(filepath):
 def check_options(options, modality):
     if not options.get("mode"):
         options["mode"] = modality
-    if not options.get("engine"):
-        options["engine"] = "default"
     if modality == "face":
-        if options["engine"] == "default" and not options.get("confidence"):
+        if not options.get("engine"):
+            options["engine"] = "bqat"
+        if options["engine"] == "bqat" and not options.get("confidence"):
             options["confidence"] = 0.7
+        # elif options["engine"] == "ofiq":
+        #     if not options.get("type"):
+        #         options.update({"type": "folder"})
         elif options["engine"] == "biqt":
             pass
     elif modality == "fingerprint":
         if not options.get("source") or options.get("source") == "default":
-            options["source"] = ["jpg", "jpeg", "bmp", "jp2", "wsq"]
+            options["source"] = ["png", "jpg", "jpeg", "bmp", "jp2", "wsq"]
         if not options.get("target") or options.get("target") == "default":
             options["target"] = "png"
     elif modality == "iris":
         pass
     elif modality == "speech":
         if not options.get("type"):
-            options.update({"type": "file"})
-        if options.get("type") == "folder":
-            options.update({"type": "file"})
-            print("folder scan not supported")
+            options.update({"type": "folder"})
+        if options.get("type") != "folder":
+            options.update({"type": "folder"})
     else:
         return False
     return options
 
 
 def generate_report(data, **options):
+    excluded_columns = ["file", "tag", "log"]
     temp = "report.html"
     df = pd.DataFrame.from_dict(data)
+    # Ensure numeric columns are not categorized
+    numeric_columns = df.select_dtypes(include='number').columns
+    # print(f'----------------{numeric_columns}')
+    df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, downcast='float')
     # df.set_index("file", inplace=True)
     # df = df.drop(columns=['file'])
+    # pd.set_option('display.float_format', '{:.2e}'.format) 
     if options.get("downsample"):
         df = df.sample(frac=options.get("downsample", 0.05))
+        
+    # Convert all columns to categorical, except for numeric types and excluded columns
+    for col in df.columns:
+        if col not in excluded_columns and not pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = df[col].astype('category')
+
     ProfileReport(
         df,
-        title=f"Biometric Quality Report by BQAT {__version__}",
+        title=f"EDA Report (BQAT v{__version__})",
         explorative=True,
         minimal=options.get("minimal", False),
-        correlations={"cramers": {"calculate": False}},
-        html={"navbar_show": True, "style": {"theme": "united"}},
+        # correlations={"cramers": {"calculate": False}},
+        correlations=None,
+        vars={
+            "num": {
+                "low_categorical_threshold":0
+            }
+        },
+        html={
+            "navbar_show": True,
+            "style": {
+                "full_width": True,
+                "theme": "simplex",
+                "logo": "https://www.biometix.com/wp-content/uploads/2020/10/logo.png",
+            },
+        },
     ).to_file(temp)
 
     with open(temp, "r") as f:
@@ -375,14 +1105,14 @@ def generate_report(data, **options):
 async def retrieve_report(file_id, db):
     fs = AsyncIOMotorGridFSBucket(db)
     file = open("myfile", "wb+")
-    await fs.download_to_stream(file_id, file)
+    await fs.download_to_stream(PydanticObjectId(file_id), file)
     file.seek(0)
     return file.read()
 
 
 async def remove_report(file_id, db):
     fs = AsyncIOMotorGridFSBucket(db)
-    await fs.delete(file_id)
+    await fs.delete(PydanticObjectId(file_id))
 
 
 def get_info():
@@ -396,41 +1126,75 @@ def get_tag(identifier):
 
 
 def get_outliers(data: list, detector: str = "ECOD"):
-    # HACK
-    # _, ver, _ = platform.python_version_tuple()
-    # if ver >= 10:
-    #     match detector:
-    #         case "ECOD":
-    #             clf = ECOD()
-    #             # clf = ECOD(n_jobs=8)
-    #         case "DeepSVDD":
-    #             clf = DeepSVDD()
-    #         case "CBLOF":
-    #             clf = CBLOF()
-    #         case "IForest":
-    #             clf = IForest()
-    #         case "KNN":
-    #             clf = KNN()
-    #         case "COPOD":
-    #             clf = COPOD()
-    #         case "PCA":
-    #             clf = PCA()
-    #         case _:
-    #             print(f"detector: {detector} not recognized, fallback to ECOD.")
-    #             clf = ECOD()
-    # else:
-    #     if detector in DETECTORS:
-    #         clf = eval(detector)
-    #     else:
-    #         print(f"detector: {detector} not recognized, fallback to ECOD.")
-    #         clf = ECOD()
-    if detector in DETECTORS:
-        clf = eval(detector)
-    else:
-        print(f"detector [{detector}] not recognized, fallback to ECOD.")
-        clf = ECOD()
+    match detector:
+        case "ECOD":
+            clf = ECOD()
+            # clf = ECOD(n_jobs=8)
+        case "CBLOF":
+            clf = CBLOF()
+        case "IForest":
+            clf = IForest()
+        case "KNN":
+            clf = KNN()
+        case "COPOD":
+            clf = COPOD()
+        case "PCA":
+            clf = PCA()
+        # case "DeepSVDD":
+        #     clf = DeepSVDD()
+        # case "DIF":
+        #     clf = DIF()
+        case _:
+            print(f"detector: {detector} not recognized, fallback to ECOD.")
+            clf = ECOD()
 
     clf.fit(pd.DataFrame.from_records(data))
     labels = clf.labels_
     scores = clf.decision_scores_
     return labels, scores
+
+
+def extend(suffixes: list):
+    suffixes = [s.casefold() for s in suffixes]
+    full_ext_list = []
+    for s in suffixes:
+        full_ext_list.append(s.capitalize())
+        full_ext_list.append(s.upper())
+        full_ext_list.append(s)
+    return full_ext_list
+
+
+def split_input_folder(
+    input_folder,
+    temp_folder,
+    batch_size=30,
+    exts=["jpg", "jpeg", "png", "bmp", "wsq", "jp2"],
+    pattern="",
+) -> list:
+    if not os.path.isdir(input_folder) or not os.path.isdir(temp_folder):
+        raise ValueError("Input folder is invalid")
+    files = [
+        file
+        for ext in extended(exts)
+        for file in Path(input_folder).rglob(f"*.{ext}")
+        if len(pattern) == 0 or re.search(pattern, file.split("/")[-1].split(".")[0])
+    ]
+    n_files = len(files)
+    batch_size = batch_size if n_files > batch_size else n_files
+    batches = (
+        (n_files // batch_size) + 1
+        if n_files % batch_size != 0
+        else n_files // batch_size
+    )
+    subfolders = []
+    for i in range(batches):
+        subfolder = Path(temp_folder) / f"batch_{i + 1}"
+        subfolder.mkdir(exist_ok=False)
+        subfolders.append(str(subfolder))
+        start = i * batch_size
+        end = start + batch_size
+        [
+            shutil.copyfile(file, subfolder / Path(file).name)
+            for file in files[start:end]
+        ]
+    return subfolders

@@ -4,8 +4,6 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-opencv-python = "==4.6.0.66"
-opencv-contrib-python = "==4.6.0.66"
 mediapipe = "*"
 wsq = "*"
 pillow = "*"
@@ -20,9 +18,10 @@ imutils = "*"
 rich = "*"
 python-multipart = "*"
 pyod = "*"
-urllib3 = "==1.26.14"
-pydantic = "==1.*"
+urllib3 = "*"
+pydantic = "*"
 email-validator = "*"
+pydantic-settings = "*"
 
 [dev-packages]
 pytest = "*"

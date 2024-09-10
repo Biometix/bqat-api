@@ -1,0 +1,100 @@
+<html>
+  <head>
+    <title>Files</title>
+    <style>
+      .is-hidden {
+        display: none;
+      }
+
+      .highlight {
+        background-color: rgba(214, 214, 214, 0.3);
+        font-weight: bold;
+      }
+
+      .thumbnail {
+        transition: transform 0.3s ease;
+        cursor: pointer;
+      }
+
+      .thumbnail:hover {
+        transform: scale(2);
+      }
+    </style>
+  </head>
+  <body>
+    <p>
+      <span style="font-size: large; font-weight: bold">Folder:</span>
+      <span style="font-style: italic">{{path}}</span>
+    </p>
+    <label for="searchbox">Search:</label>
+    <input type="search" id="searchbox" oninput="liveSearch()" />
+    <p id="result-count"></p>
+    <ul>
+      {% for file in files %}
+      <li class="item">
+        <a href="{{file}}">{{file}}</a><br />
+        {% if file.endswith("/") %} {% else %}
+        <p class="image-size"></p>
+        {% if file.endswith("wav") %}
+        <audio controls>
+          <source src="{{ file }}" alt="Sample Audio" type="audio/wav">
+          Your browser does not support the audio element.
+        </audio>
+        {% else %}
+        <img
+          class="thumbnail"
+          src="{{file}}"
+          alt="Sample Image"
+          style="
+            width: 200px;
+            margin: 20px 100px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2),
+              0 6px 20px 0 rgba(0, 0, 0, 0.19);
+          "
+          loading="lazy"
+        />
+        {% endif %}
+        {% endif %}
+        <hr />
+      </li>
+      {% endfor %}
+    </ul>
+
+    <script>
+      const images = document.querySelectorAll(".thumbnail");
+      const imageSizes = document.querySelectorAll(".image-size");
+
+      images.forEach((image, index) => {
+        image.onload = () => {
+          const width = image.naturalWidth;
+          const height = image.naturalHeight;
+          imageSizes[index].textContent = `size: ${width} x ${height}`;
+        };
+      });
+
+      function liveSearch() {
+        let count = 0;
+        const items = document.querySelectorAll(".item");
+        const searchQuery = document
+          .getElementById("searchbox")
+          .value.toLowerCase();
+
+        for (let i = 0; i < items.length; i++) {
+          if (items[i].innerText.toLowerCase().includes(searchQuery)) {
+            items[i].classList.remove("is-hidden");
+            items[i].classList.add("highlight");
+            count++;
+          } else {
+            items[i].classList.add("is-hidden");
+            items[i].classList.remove("highlight");
+          }
+        }
+
+        document.getElementById(
+          "result-count"
+        ).textContent = `Found ${count} matching item(s).`;
+      }
+    </script>
+  </body>
+</html>
