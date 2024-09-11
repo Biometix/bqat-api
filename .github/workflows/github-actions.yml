@@ -63,7 +63,7 @@ jobs:
 #         run: ./test.sh
 
   release:
-    name: Rebuild and Release
+    name: Build and Release
     # needs: [build, test]
     runs-on: ubuntu-latest
     permissions:
