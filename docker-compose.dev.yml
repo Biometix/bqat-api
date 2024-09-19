@@ -1,7 +1,5 @@
-version: '3.9'
-
 volumes:
-  db_mongo:
+  mongo_dev:
 
 
 services:
@@ -12,11 +10,9 @@ services:
 
   mongo:
     image: mongo:latest
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: admin
+    command: [--noauth]
     volumes:
-      - db_mongo:/data/db
+      - mongo_dev:/data/db
 
   mongo-express:
     image: mongo-express:latest
@@ -43,11 +39,12 @@ services:
       - redis
     environment:
       DEBUG_MODE: YES
-      MGO_URL: mongodb://root:admin@mongo:27017/
+      MGO_URL: mongodb://mongo:27017/
       SCAN_DB: scan
       LOG_DB: log
       RDS_URL: redis://redis:6379/
       QUEUE_DB: 0
+      DATA: data/
     volumes:
       - ./api:/app/api
       - ./bqat:/app/bqat
