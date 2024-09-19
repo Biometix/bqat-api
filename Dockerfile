@@ -142,6 +142,7 @@ RUN mkdir data
 
 COPY bqat bqat/
 COPY api api/
+COPY api/favicon.png .
 
 COPY --from=build /app/ofiq/OFIQ-Project/install_x86_64_linux/Release/bin ./OFIQ/bin
 COPY --from=build /app/ofiq/OFIQ-Project/install_x86_64_linux/Release/lib ./OFIQ/lib
