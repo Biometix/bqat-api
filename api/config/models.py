@@ -19,7 +19,7 @@ class Metadata(BaseModel):
             "example": {
                 "result": {
                     "uuid": "8cea4af7-1670-5752-be3c-b29f49fc039d",
-                    "file": "data/input/290349_1.jpg",
+                    "file": "input/face/290349_1.jpg",
                     "size": {"w": 640, "h": 480},
                     "confidence": 0.8088988661766052,
                     "bounding_box": {
@@ -365,8 +365,16 @@ class ScanEdit(BaseModel):
     @field_validator("emotion")
     @classmethod
     def emotion_must_be_legal(cls, v):
-        race_List = ("angry", "disgust", "fear", "happy", "sad", "surprise", "neutral")
-        if v not in race_List:
+        emotion_List = (
+            "angry",
+            "disgust",
+            "fear",
+            "happy",
+            "sad",
+            "surprise",
+            "neutral",
+        )
+        if v not in emotion_List:
             raise ValueError("emotion value not found")
         return v
 
@@ -474,6 +482,20 @@ class PreprocessingLog(Document):
             raise ValueError(f"'{v}' not exist")
         return v
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "source": "input/face",
+                "options": {
+                    "convert": "png",
+                    "scale": 0.3,
+                    "mode": "greyscale",
+                    "pattern": ".*face.*",
+                },
+            }
+        }
+    )
+
 
 class TaskLog(Document):
     tid: UUID = Field(default_factory=uuid4)
@@ -494,7 +516,7 @@ class TaskLog(Document):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "input": "data/input",
+                "input": "input/face",
                 "total": 200,
                 "options": {
                     "engine": "bqat",
@@ -517,7 +539,7 @@ class EditTaskLog(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
-                "input": "data/input",
+                "input": "input/face",
                 "finished": 100,
                 "options": {
                     "engine": "bqat",
@@ -546,7 +568,11 @@ class CollectionLog(Document):
         json_schema_extra={
             "example": {
                 "collection": "8692d82d-ff5f-485e-8189-5e62e60858c9",
-                "options": {"engine": "default", "mode": "face", "confidence": 0.7},
+                "options": {
+                    "engine": "default",
+                    "mode": "face",
+                    "confidence": 0.7,
+                },
             }
         }
     )
@@ -588,7 +614,13 @@ class TaskQueue(BaseModel):
     done: int = 0
     eta: int = 0
     model_config = ConfigDict(
-        json_schema_extra={"example": {"total": 100, "done": 45, "eta": 7200}}
+        json_schema_extra={
+            "example": {
+                "total": 100,
+                "done": 45,
+                "eta": 7200,
+            }
+        }
     )
 
 
