@@ -88,7 +88,6 @@ def outlier_detection_task(data, options):
 def preprocess_task(file: str, output: dir, config: dict) -> None:
     try:
         import wsq
-        # name=file.split("/")[-1].split(".")[0]
         file = Path(file)
         pattern = config.get("pattern", None)
         
@@ -836,7 +835,7 @@ async def run_preprocessing_tasks(
         config = {
             "frac": task["options"].get("scale"),
             "width": task["options"].get("resize"),
-            "grayscale": task["options"].get("grayscale"),
+            "mode": task["options"].get("mode"),
             "target": task["options"].get("convert"),
             "pattern": task["options"].get("pattern"),
         }
