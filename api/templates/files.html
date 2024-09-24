@@ -32,12 +32,12 @@
     <ul>
       {% for file in files %}
       <li class="item">
-        <a href="{{file}}">{{file}}</a><br />
+        <a href="{{file}}">{{file.split('data/')[1]}}</a><br />
         {% if file.endswith("/") %} {% else %}
         <p class="image-size"></p>
         {% if file.endswith("wav") %}
         <audio controls>
-          <source src="{{ file }}" alt="Sample Audio" type="audio/wav">
+          <source src="{{file}}" alt="Sample Audio" type="audio/wav">
           Your browser does not support the audio element.
         </audio>
         {% else %}

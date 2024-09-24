@@ -20,7 +20,7 @@ templates = Jinja2Templates(directory="api/templates")
 
 
 @router.get(
-    f"/{Settings().DATA}" + "{dir:path}/",
+    f"/warehouse/{Settings().DATA}" + "{dir:path}/",
     response_class=HTMLResponse,
     description="Lists files and directories recursively from a specified directory (Where Docker Mounting Folder). return a html page (files.html) with generates URLs for each file and directory.",
 )
@@ -36,12 +36,12 @@ def list_dirs(request: Request, dir: str):
         ]
     )
     return templates.TemplateResponse(
-        "files.html", {"request": request, "files": files_paths, "path": path}
+        "files.html", {"request": request, "files": files_paths, "path": dir}
     )
 
 
 @router.get(
-    f"/{Settings().DATA}" + "{path:path}",
+    f"/warehouse/{Settings().DATA}" + "{path:path}",
     description="Get image or audio files from the data folder.",
 )
 def get_file(path: str, format: str = "webp"):
@@ -56,8 +56,13 @@ def get_file(path: str, format: str = "webp"):
             media_type=f"image/{format}",
             headers={"Content-Disposition": f"filename={path.stem}"},
         )
-    else:
+    elif path.is_file():
         return FileResponse(path)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found at {path}",
+        )
 
 
 @router.post(
@@ -177,5 +182,10 @@ def get_converted(request: ImageRequest):
 
 
 @router.get("/favicon.ico", include_in_schema=False)
-async def favicon():
-    return FileResponse("favicon.png")
+async def favicon() -> FileResponse:
+    if Path("favicon.png").exists():
+        return FileResponse("favicon.png")
+    elif Path("api/favicon.png").exists():
+        return FileResponse("api/favicon.png")
+    else:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
