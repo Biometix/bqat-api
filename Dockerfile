@@ -105,6 +105,7 @@ ENV PIP_NO_CACHE_DIR=off
 ENV MPLCONFIGDIR=/app/temp
 # ENV RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 ENV RAY_DISABLE_DOCKER_CPU_WARNING=1
+ENV YDATA_PROFILING_NO_ANALYTICS=True
 
 COPY bqat/bqat_core/misc/BQAT/haarcascade_smile.xml bqat_core/misc/haarcascade_smile.xml
 COPY bqat/bqat_core/misc/NISQA/conda-lock.yml .

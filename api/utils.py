@@ -1058,6 +1058,7 @@ def generate_report(data, **options):
     temp = "report.html"
     df = pd.DataFrame.from_dict(data)
     # Ensure numeric columns are not categorized
+    df = df.apply(lambda col: pd.to_numeric(col, errors="ignore"))
     numeric_columns = df.select_dtypes(include='number').columns
     # print(f'----------------{numeric_columns}')
     df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, downcast='float')
@@ -1077,13 +1078,17 @@ def generate_report(data, **options):
         title=f"EDA Report (BQAT v{__version__})",
         explorative=True,
         minimal=options.get("minimal", False),
-        # correlations={"cramers": {"calculate": False}},
+        progress_bar=False,
+        # correlations={
+        #     "auto": {"calculate": False},
+        #     "pearson": {"calculate": False},
+        #     "spearman": {"calculate": True},
+        #     "kendall": {"calculate": False},
+        #     "phi_k": {"calculate": False},
+        #     "cramers": {"calculate": False},
+        # },
         correlations=None,
-        vars={
-            "num": {
-                "low_categorical_threshold":0
-            }
-        },
+        vars={"num": {"low_categorical_threshold": 0}},
         html={
             "navbar_show": True,
             "style": {
