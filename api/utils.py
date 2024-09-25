@@ -37,6 +37,12 @@ from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn
 from api.config import Settings
 from api.config.models import (
     CollectionLog,
+    FaceSpecBIQT,
+    FaceSpecBQAT,
+    FaceSpecOFIQ,
+    FingerprintSpecDefault,
+    IrisSpecDefault,
+    SpeechSpecDefault,
     # DetectorOptions,
     # ReportLog,
     Status,
@@ -633,7 +639,16 @@ async def run_report_tasks(
 
         print(f">> Generate report: {dataset_id}")
 
-        report = [report_task.remote(data, task.get("options"))]
+        options = task.get("options")
+        dataset_log = await log["datasets"].find_one({"collection": dataset_id})
+        options.update(
+            {
+                "mode": dataset_log["options"].get("mode"),
+                "engine": dataset_log["options"].get("engine"),
+            }
+        )
+
+        report = [report_task.remote(data, options)]
         await log["reports"].find_one_and_update(
             {"tid": task["tid"]},
             {
@@ -1079,6 +1094,26 @@ def generate_report(data, **options):
         if col not in excluded_columns and not pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].astype('category')
 
+    match options.get("mode"):
+        case "face":
+            match options.get("engine"):
+                case "bqat":
+                    descriptions = {item.name: item.value for item in FaceSpecBQAT}
+                case "ofiq":
+                    descriptions = {item.name: item.value for item in FaceSpecOFIQ}
+                case "biqt":
+                    descriptions = {item.name: item.value for item in FaceSpecBIQT}
+                case _:
+                    descriptions = {}
+        case "fingerprint":
+            descriptions = {item.name: item.value for item in FingerprintSpecDefault}
+        case "iris":
+            descriptions = {item.name: item.value for item in IrisSpecDefault}
+        case "speech":
+            descriptions = {item.name: item.value for item in SpeechSpecDefault}
+        case _:
+            descriptions = {}
+
     pd.set_option("display.float_format", "{:.4f}".format)
 
     ProfileReport(
@@ -1105,6 +1140,7 @@ def generate_report(data, **options):
                 "logo": "https://www.biometix.com/wp-content/uploads/2020/10/logo.png",
             },
         },
+        variables={"descriptions": descriptions},
     ).to_file(temp)
 
     with open(temp, "r") as f:
