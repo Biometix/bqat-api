@@ -634,3 +634,117 @@ class TaskQueue(BaseModel):
 #
 # def ErrorResponseModel(error, code, message):
 #     return {"error": error, "code": code, "message": message}
+
+
+class FaceSpecBQAT(str, Enum):
+    ipd = "Inter-pupillary distance."
+    confidence = "Confidence level of face dectection (not quality score)."
+    bbox_left = "Left border of the face bounding box coordinates in pixels."
+    bbox_right = "Right border of the face bounding box coordinates in pixels."
+    bbox_upper = "Upper border of the face bounding box coordinates in pixels."
+    bbox_bottom = "Bottom border of the face bounding box coordinates in pixels."
+    eye_closed_left = "Left eye close or not."
+    eye_closed_right = "Right eye close or not."
+    pupil_right_x = "X coordinates of right pupil in pixels."
+    pupil_right_y = "Y coordinates of right pupil in pixels."
+    pupil_left_x = "X coordinates of left pupil in pixels."
+    pupil_left_y = "Y coordinates of left pupil in pixels."
+    yaw_pose = "Yaw in head pose direction."
+    yaw_degree = "Yaw in head pose degree."
+    pitch_pose = "Pitch in head pose direction."
+    pitch_degree = "Pitch in head pose degree."
+    roll_pose = "Roll in head pose direction."
+    roll_degree = "Roll in head pose degree."
+    smile = "Smile detected or not."
+    glassed = "Glasses detected or not."
+
+
+class FaceSpecOFIQ(str, Enum):
+    quality = "MagFace-based unified quality score measure."
+    background_uniformity = "Gradient-based background uniformity."
+    illumination_uniformity = "Illumination unformity by summing up the minima of the histograms of the left and the right side of the face."
+    luminance_mean = "Luminance mean measure computed from the luminance histogram."
+    luminance_variance = (
+        "Luminance variance measure computed from the luminance histogram."
+    )
+    under_exposure_prevention = "Under-exposure prevention by computing the proportion of low-intensity pixels in the luminance image to assess the abscence of under-exposure."
+    over_exposure_prevention = "Over-exposure prevention by computing the proportion of high-intensity pixels in the luminance image to assess the abscence of over-exposure."
+    dynamic_range = "Dynamic range computed from the luminance histogram."
+    sharpness = "Sharpness assessment based on a random forest classifier trained by the OFIQ development team."
+    compression_artifacts = "Assessment of the absence of compression artifact (both JPEG and JPEG2000) based on a CNN trained by the OFIQ development team."
+    natural_colour = "Assessment of the naturalness of the colour based on the conversion of the RGB presentation of the image to the CIELAB colour space."
+    single_face_present = "Assessment of the uniqueness of the most dominant face detected by comparing its size with the size of the second largest face detected."
+    eyes_open = "Eyes openness assessment based on computing eyes aspect ratio from eye landmarks."
+    mouth_closed = (
+        "Mouth closed assessment based on computing a ratio from mouth landmarks."
+    )
+    eyes_visible = "Eyes visibility assessment by measuring the coverage of the eye visibility zone with the result of face occlusion segmentation computed during pre-processing."
+    mouth_occlusion_prevention = "Assessment of the absence of mouth occlusion by measuring the coverage of the mouth region from mouth landmarks with the result of face occlusion segmentation computed on pre-processing."
+    face_occlusion_prevention = "Assessment of the absence of face occlusion by measuring the coverage of the landmarked region with the result of face occlusion segmentation computed during pre-processing."
+    inter_eye_distance = " 	Inter-eye distance assessment based on computing the Euclidean length of eyes’ centres and multiplication with the secant of the yaw angle computed during pre-processing."
+    head_size = "Size of the head based on computing the height of the face computed from facial landmarks with the height of the image."
+    leftward_crop_of_the_face_image = "Left of the face image crop."
+    rightward_crop_of_the_face_image = "Right of the face image crop."
+    downward_crop_of_the_face_image = "Bottom of the face image crop."
+    upward_crop_of_the_face_image = "Top of the face image crop."
+    head_pose_yaw = "Pose angle yaw frontal alignment based on the 3DDFAV2."
+    head_pose_pitch = "Pose angle pitch frontal alignment based on the 3DDFAV2."
+    head_pose_roll = "Pose angle roll frontal alignment based on the 3DDFAV2."
+    expression_neutrality = "Expression neutrality estimation based on a fusion of HSEMotion with Efficient-Expression-Neutrality-Estimation."
+    no_head_coverings = "Assessment of the absence of head coverings by counting the pixels being labeled as head covers in the mask output by the face parsing computed during pre-processing."
+
+
+class FaceSpecBIQT(str, Enum):
+    background_deviation = "Image background deviation."
+    background_grayness = "Image background grayness."
+    blur = "Overall image blurriness."
+    blur_face = "Face area blurriness."
+    focus = "Overall image focus."
+    focus_face = "Face area focus."
+    openbr_confidence = "Confidence value from openbr."
+    opencv_IPD = "Inter eye distance from opencv."
+    over_exposure = "Overall image exposure value."
+    over_exposure_face = "Face area exposure value."
+    quality = "Overall quality score."
+    skin_ratio_face = "Skin to face area ratio."
+    skin_ratio_full = "Skin to fill image area ratio."
+
+
+class FingerprintSpecDefault(str, Enum):
+    NFIQ2 = "NIST/NFIQ2 quality score."
+    UniformImage = "Standard deviation of gray levels in image indicates uniformity."
+    EmptyImageOrContrastTooLow = "The image is blank or the contrast is too low."
+    FingerprintImageWithMinutiae = "Number of minutia in image."
+    SufficientFingerprintForeground = "Number of pixels in the computed foreground."
+    EdgeStd = "Metric to identify malformed images."
+
+
+class IrisSpecDefault(str, Enum):
+    quality = "An overall quality score that leverages several statistics together."
+    contrast = "Raw score quantifying overall image contrast."
+    sharpness = "Raw score quantifying the sharpness of the image."
+    iris_diameter = "Raw diameter of the iris measured in pixels."
+    percent_visible_iris = "Percentage of visible iris area."
+    iris_pupil_gs = "Raw measure quantifying how distinguishable the boundary is between the pupil and the iris."
+    iris_sclera_gs = "Raw measure quantifying how distinguishable the boundary is between the iris and the sclera."
+    iso_overall_quality = "The overall ISO quality score based on the product of normalized individual iso metrics."
+    iso_greyscale_utilization = "The spread of intensity values regarding the pixel values within the iris portion of the image, recommended value: 6 or greater."
+    iso_iris_pupil_concentricity = "The degree to which the pupil centre and the iris centre are in the same location, recommended value: 90 or greater."
+    iso_iris_pupil_contrast = "The image characteristics at the boundary between the iris region and the pupil, recommended value: 30 or greater."
+    iso_iris_pupil_ratio = "The degree to which the pupil is dilated or constricted, recommended value: between 20 and 70."
+    iso_iris_sclera_contrast = "The image characteristics at the boundary between the iris region and the sclera, recommended value: greater than 5."
+    iso_margin_adequacy = "The degree to which the iris portion of the image is centred relative to the edges of the entire image, recommended value: greater than 80."
+    iso_pupil_boundary_circularity = "The circularity of the iris-pupil boundary."
+    iso_sharpness = "The degree of focus present in the image."
+    iso_usable_iris_area = "The fraction of the iris portion of the image that is not occluded by eyelids, eyelashes, or specular reflections."
+
+
+class SpeechSpecDefault(str, Enum):
+    Quality = "Overall quality estimation of the speech audio file."
+    Noisiness = "Quality degradation such as background, circuit, or coding noise."
+    Discontinuity = "Quality degradation caused by isolated or non-stationary distortions, e.g. introduced by packet-loss or clipping."
+    Coloration = "Quality degradation caused by frequency response distortions, e.g. introduced by bandwidth limitation, low bitrate codecs, or packet-loss concealment."
+    Naturalness = "Estimation of the naturalness of synthetic speech."
+    Loudness = (
+        "Influence of the loudness on the perceived quality of transmitted speech."
+    )

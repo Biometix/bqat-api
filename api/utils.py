@@ -37,6 +37,12 @@ from rich.progress import MofNCompleteColumn, Progress, SpinnerColumn
 from api.config import Settings
 from api.config.models import (
     CollectionLog,
+    FaceSpecBIQT,
+    FaceSpecBQAT,
+    FaceSpecOFIQ,
+    FingerprintSpecDefault,
+    IrisSpecDefault,
+    SpeechSpecDefault,
     # DetectorOptions,
     # ReportLog,
     Status,
@@ -633,7 +639,16 @@ async def run_report_tasks(
 
         print(f">> Generate report: {dataset_id}")
 
-        report = [report_task.remote(data, task.get("options"))]
+        options = task.get("options")
+        dataset_log = await log["datasets"].find_one({"collection": dataset_id})
+        options.update(
+            {
+                "mode": dataset_log["options"].get("mode"),
+                "engine": dataset_log["options"].get("engine"),
+            }
+        )
+
+        report = [report_task.remote(data, options)]
         await log["reports"].find_one_and_update(
             {"tid": task["tid"]},
             {
@@ -1054,17 +1069,23 @@ def check_options(options, modality):
 
 
 def generate_report(data, **options):
-    excluded_columns = ["file", "tag", "log"]
     temp = "report.html"
     df = pd.DataFrame.from_dict(data)
+
+    excluded_columns = ["file", "tag", "log"]
+    excluded_columns = [col for col in excluded_columns if col in df.columns]
+
+    df = df.drop(columns=excluded_columns)
+    df = df.loc[:, ~df.columns.str.endswith("_scalar")]
+
     # Ensure numeric columns are not categorized
-    df = df.apply(lambda col: pd.to_numeric(col, errors="ignore"))
-    numeric_columns = df.select_dtypes(include='number').columns
-    # print(f'----------------{numeric_columns}')
+    try:
+        df = df.apply(lambda col: pd.to_numeric(col))
+    except Exception as e:
+        print(f"Error converting string columns to float: {e}")
+    numeric_columns = df.select_dtypes(include="number").columns
     df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, downcast='float')
-    # df.set_index("file", inplace=True)
-    # df = df.drop(columns=['file'])
-    # pd.set_option('display.float_format', '{:.2e}'.format) 
+
     if options.get("downsample"):
         df = df.sample(frac=options.get("downsample", 0.05))
         
@@ -1073,30 +1094,53 @@ def generate_report(data, **options):
         if col not in excluded_columns and not pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].astype('category')
 
+    match options.get("mode"):
+        case "face":
+            match options.get("engine"):
+                case "bqat":
+                    descriptions = {item.name: item.value for item in FaceSpecBQAT}
+                case "ofiq":
+                    descriptions = {item.name: item.value for item in FaceSpecOFIQ}
+                case "biqt":
+                    descriptions = {item.name: item.value for item in FaceSpecBIQT}
+                case _:
+                    descriptions = {}
+        case "fingerprint":
+            descriptions = {item.name: item.value for item in FingerprintSpecDefault}
+        case "iris":
+            descriptions = {item.name: item.value for item in IrisSpecDefault}
+        case "speech":
+            descriptions = {item.name: item.value for item in SpeechSpecDefault}
+        case _:
+            descriptions = {}
+
+    pd.set_option("display.float_format", "{:.4f}".format)
+
     ProfileReport(
         df,
         title=f"EDA Report (BQAT v{__version__})",
         explorative=True,
         minimal=options.get("minimal", False),
-        progress_bar=False,
-        # correlations={
-        #     "auto": {"calculate": False},
-        #     "pearson": {"calculate": False},
-        #     "spearman": {"calculate": True},
-        #     "kendall": {"calculate": False},
-        #     "phi_k": {"calculate": False},
-        #     "cramers": {"calculate": False},
-        # },
-        correlations=None,
+        # progress_bar=False,
+        correlations={
+            "auto": {"calculate": False},
+            "pearson": {"calculate": True},
+            "spearman": {"calculate": True},
+            "kendall": {"calculate": True},
+            "phi_k": {"calculate": False},
+            "cramers": {"calculate": False},
+        },
+        # correlations=None,
         vars={"num": {"low_categorical_threshold": 0}},
         html={
             "navbar_show": True,
+            # "full_width": True,
             "style": {
-                "full_width": True,
                 "theme": "simplex",
                 "logo": "https://www.biometix.com/wp-content/uploads/2020/10/logo.png",
             },
         },
+        variables={"descriptions": descriptions},
     ).to_file(temp)
 
     with open(temp, "r") as f:
