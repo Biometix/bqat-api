@@ -8,6 +8,7 @@ import pickle
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -60,7 +61,7 @@ def scan_task(path, options):
             return process(path, **options)
         else:
             result = process(path, **options)
-            result.update({"tag": get_tag(result.get("file", path))})
+            # result.update({"tag": get_tag(result.get("file", path))})
     except Exception as e:
         print(f">>>> File scan error: {str(e)}")
         log = {"file": path, "error": str(e)}
@@ -1069,83 +1070,87 @@ def check_options(options, modality):
 
 
 def generate_report(data, **options):
-    temp = "report.html"
-    df = pd.DataFrame.from_dict(data)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        temp_file = Path(tmpdir) / "report.html"
+        df = pd.DataFrame.from_dict(data)
 
-    excluded_columns = ["file", "tag", "log"]
-    excluded_columns = [col for col in excluded_columns if col in df.columns]
+        excluded_columns = ["file", "tag", "log"]
+        excluded_columns = [col for col in excluded_columns if col in df.columns]
 
-    df = df.drop(columns=excluded_columns)
-    df = df.loc[:, ~df.columns.str.endswith("_scalar")]
+        df = df.drop(columns=excluded_columns)
+        df = df.loc[:, ~df.columns.str.endswith("_scalar")]
 
-    # Ensure numeric columns are not categorized
-    try:
-        df = df.apply(lambda col: pd.to_numeric(col))
-    except Exception as e:
-        print(f"Error converting string columns to float: {e}")
-    numeric_columns = df.select_dtypes(include="number").columns
-    df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, downcast='float')
+        # Ensure numeric columns are not categorized
+        try:
+            df = df.apply(lambda col: pd.to_numeric(col))
+        except Exception as e:
+            print(f"Error converting string columns to float: {e}")
+        numeric_columns = df.select_dtypes(include="number").columns
+        df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, downcast="float")
 
-    if options.get("downsample"):
-        df = df.sample(frac=options.get("downsample", 0.05))
-        
-    # Convert all columns to categorical, except for numeric types and excluded columns
-    for col in df.columns:
-        if col not in excluded_columns and not pd.api.types.is_numeric_dtype(df[col]):
-            df[col] = df[col].astype('category')
+        if options.get("downsample"):
+            df = df.sample(frac=options.get("downsample", 0.05))
 
-    match options.get("mode"):
-        case "face":
-            match options.get("engine"):
-                case "bqat":
-                    descriptions = {item.name: item.value for item in FaceSpecBQAT}
-                case "ofiq":
-                    descriptions = {item.name: item.value for item in FaceSpecOFIQ}
-                case "biqt":
-                    descriptions = {item.name: item.value for item in FaceSpecBIQT}
-                case _:
-                    descriptions = {}
-        case "fingerprint":
-            descriptions = {item.name: item.value for item in FingerprintSpecDefault}
-        case "iris":
-            descriptions = {item.name: item.value for item in IrisSpecDefault}
-        case "speech":
-            descriptions = {item.name: item.value for item in SpeechSpecDefault}
-        case _:
-            descriptions = {}
+        # Convert all columns to categorical, except for numeric types and excluded columns
+        for col in df.columns:
+            if col not in excluded_columns and not pd.api.types.is_numeric_dtype(
+                df[col]
+            ):
+                df[col] = df[col].astype("category")
 
-    pd.set_option("display.float_format", "{:.4f}".format)
+        match options.get("mode"):
+            case "face":
+                match options.get("engine"):
+                    case "bqat":
+                        descriptions = {item.name: item.value for item in FaceSpecBQAT}
+                    case "ofiq":
+                        descriptions = {item.name: item.value for item in FaceSpecOFIQ}
+                    case "biqt":
+                        descriptions = {item.name: item.value for item in FaceSpecBIQT}
+                    case _:
+                        descriptions = {}
+            case "fingerprint":
+                descriptions = {
+                    item.name: item.value for item in FingerprintSpecDefault
+                }
+            case "iris":
+                descriptions = {item.name: item.value for item in IrisSpecDefault}
+            case "speech":
+                descriptions = {item.name: item.value for item in SpeechSpecDefault}
+            case _:
+                descriptions = {}
 
-    ProfileReport(
-        df,
-        title=f"EDA Report (BQAT v{__version__})",
-        explorative=True,
-        minimal=options.get("minimal", False),
-        # progress_bar=False,
-        correlations={
-            "auto": {"calculate": False},
-            "pearson": {"calculate": True},
-            "spearman": {"calculate": True},
-            "kendall": {"calculate": True},
-            "phi_k": {"calculate": False},
-            "cramers": {"calculate": False},
-        },
-        # correlations=None,
-        vars={"num": {"low_categorical_threshold": 0}},
-        html={
-            "navbar_show": True,
-            # "full_width": True,
-            "style": {
-                "theme": "simplex",
-                "logo": "https://www.biometix.com/wp-content/uploads/2020/10/logo.png",
+        pd.set_option("display.float_format", "{:.4f}".format)
+
+        ProfileReport(
+            df,
+            title=f"EDA Report (BQAT v{__version__})",
+            explorative=True,
+            minimal=options.get("minimal", False),
+            # progress_bar=False,
+            correlations={
+                "auto": {"calculate": False},
+                "pearson": {"calculate": True},
+                "spearman": {"calculate": True},
+                "kendall": {"calculate": True},
+                "phi_k": {"calculate": False},
+                "cramers": {"calculate": False},
             },
-        },
-        variables={"descriptions": descriptions},
-    ).to_file(temp)
+            # correlations=None,
+            vars={"num": {"low_categorical_threshold": 0}},
+            html={
+                "navbar_show": True,
+                # "full_width": True,
+                "style": {
+                    "theme": "simplex",
+                    "logo": "https://www.biometix.com/wp-content/uploads/2020/10/logo.png",
+                },
+            },
+            variables={"descriptions": descriptions},
+        ).to_file(temp_file)
 
-    with open(temp, "r") as f:
-        html = f.read()
-    os.remove(temp)
+        with open(temp_file, "r") as f:
+            html = f.read()
 
     return html
 

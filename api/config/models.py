@@ -712,11 +712,11 @@ class FaceSpecBIQT(str, Enum):
 
 class FingerprintSpecDefault(str, Enum):
     NFIQ2 = "NIST/NFIQ2 quality score."
-    UniformImage = "Standard deviation of gray levels in image indicates uniformity."
-    EmptyImageOrContrastTooLow = "The image is blank or the contrast is too low."
-    FingerprintImageWithMinutiae = "Number of minutia in image."
-    SufficientFingerprintForeground = "Number of pixels in the computed foreground."
-    EdgeStd = "Metric to identify malformed images."
+    uniform_image = "Standard deviation of gray levels in image indicates uniformity."
+    empty_image_or_contrast_too_low = "The image is blank or the contrast is too low."
+    fingerprint_image_with_minutiae = "Number of minutia in image."
+    sufficient_fingerprint_foreground = "Number of pixels in the computed foreground."
+    edge_std = "Metric to identify malformed images."
 
 
 class IrisSpecDefault(str, Enum):
@@ -740,11 +740,11 @@ class IrisSpecDefault(str, Enum):
 
 
 class SpeechSpecDefault(str, Enum):
-    Quality = "Overall quality estimation of the speech audio file."
-    Noisiness = "Quality degradation such as background, circuit, or coding noise."
-    Discontinuity = "Quality degradation caused by isolated or non-stationary distortions, e.g. introduced by packet-loss or clipping."
-    Coloration = "Quality degradation caused by frequency response distortions, e.g. introduced by bandwidth limitation, low bitrate codecs, or packet-loss concealment."
-    Naturalness = "Estimation of the naturalness of synthetic speech."
-    Loudness = (
+    quality = "Overall quality estimation of the speech audio file."
+    noisiness = "Quality degradation such as background, circuit, or coding noise."
+    discontinuity = "Quality degradation caused by isolated or non-stationary distortions, e.g. introduced by packet-loss or clipping."
+    coloration = "Quality degradation caused by frequency response distortions, e.g. introduced by bandwidth limitation, low bitrate codecs, or packet-loss concealment."
+    naturalness = "Estimation of the naturalness of synthetic speech."
+    loudness = (
         "Influence of the loudness on the perceived quality of transmitted speech."
     )
