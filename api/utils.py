@@ -12,7 +12,9 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
+import numpy as np
 import pandas as pd
 import ray
 
@@ -1071,7 +1073,8 @@ def check_options(options, modality):
 
 def generate_report(data, **options):
     with tempfile.TemporaryDirectory() as tmpdir:
-        temp_file = Path(tmpdir) / "report.html"
+        temp_file = Path(tmpdir) / f"{uuid4()}.html"
+
         df = pd.DataFrame.from_dict(data)
 
         excluded_columns = ["file", "tag", "log"]
@@ -1080,22 +1083,23 @@ def generate_report(data, **options):
         df = df.drop(columns=excluded_columns)
         df = df.loc[:, ~df.columns.str.endswith("_scalar")]
 
+        # Replace nan with numpy.nan
+        df = df.replace("nan", np.nan)
+
         # Ensure numeric columns are not categorized
-        try:
-            df = df.apply(lambda col: pd.to_numeric(col))
-        except Exception as e:
-            print(f"Error converting string columns to float: {e}")
+        tmp = df.apply(lambda col: pd.to_numeric(col, errors="coerce"))
+        df = tmp.fillna(df)
+
         numeric_columns = df.select_dtypes(include="number").columns
         df[numeric_columns] = df[numeric_columns].apply(pd.to_numeric, downcast="float")
 
         if options.get("downsample"):
             df = df.sample(frac=options.get("downsample", 0.05))
 
-        # Convert all columns to categorical, except for numeric types and excluded columns
+        # Convert specified columns to categorical values
+        cat_cols = ("roll_pose", "pitch_pose", "yaw_pose")
         for col in df.columns:
-            if col not in excluded_columns and not pd.api.types.is_numeric_dtype(
-                df[col]
-            ):
+            if col not in excluded_columns and col in cat_cols:
                 df[col] = df[col].astype("category")
 
         match options.get("mode"):
@@ -1103,28 +1107,43 @@ def generate_report(data, **options):
                 match options.get("engine"):
                     case "bqat":
                         descriptions = {item.name: item.value for item in FaceSpecBQAT}
+                        metadata = {
+                            "description": "Face image dataset, processed by BQAT engine."
+                        }
                     case "ofiq":
                         descriptions = {item.name: item.value for item in FaceSpecOFIQ}
+                        metadata = {
+                            "description": "Face image dataset, processed by OFIQ engine."
+                        }
                     case "biqt":
                         descriptions = {item.name: item.value for item in FaceSpecBIQT}
+                        metadata = {
+                            "description": "Face image dataset, processed by BIQT engine."
+                        }
                     case _:
                         descriptions = {}
+                        metadata = {"description": "Face image dataset."}
             case "fingerprint":
                 descriptions = {
                     item.name: item.value for item in FingerprintSpecDefault
                 }
+                metadata = {"description": "Fingerprint image dataset."}
             case "iris":
                 descriptions = {item.name: item.value for item in IrisSpecDefault}
+                metadata = {"description": "Iris image dataset."}
             case "speech":
                 descriptions = {item.name: item.value for item in SpeechSpecDefault}
+                metadata = {"description": "Audio file dataset."}
             case _:
                 descriptions = {}
+                metadata = {"description": "Not available."}
 
         pd.set_option("display.float_format", "{:.4f}".format)
 
         ProfileReport(
             df,
             title=f"EDA Report (BQAT v{__version__})",
+            dataset=metadata,
             explorative=True,
             minimal=options.get("minimal", False),
             # progress_bar=False,
