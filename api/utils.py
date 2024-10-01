@@ -643,13 +643,14 @@ async def run_report_tasks(
         print(f">> Generate report: {dataset_id}")
 
         options = task.get("options")
-        dataset_log = await log["datasets"].find_one({"collection": dataset_id})
-        options.update(
-            {
-                "mode": dataset_log["options"].get("mode"),
-                "engine": dataset_log["options"].get("engine"),
-            }
-        )
+        if not external:
+            dataset_log = await log["datasets"].find_one({"collection": dataset_id})
+            options.update(
+                {
+                    "mode": dataset_log["options"].get("mode"),
+                    "engine": dataset_log["options"].get("engine"),
+                }
+            )
 
         report = [report_task.remote(data, options)]
         await log["reports"].find_one_and_update(
