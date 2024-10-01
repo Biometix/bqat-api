@@ -116,7 +116,7 @@ COPY Pipfile /app/
 COPY tests /app/tests/
 
 ENV PATH=/app/mamba/bin:${PATH}
-RUN apt update && apt -y install curl ca-certificates libblas-dev liblapack-dev; curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Mambaforge-$(uname)-$(uname -m).sh" && \
+RUN apt update && apt -y install curl ca-certificates libblas-dev liblapack-dev; curl -L -O "https://github.com/conda-forge/miniforge/releases/download/24.7.1-2/Mambaforge-$(uname)-$(uname -m).sh" && \
     ( echo yes ; echo yes ; echo mamba ; echo yes ) | bash Mambaforge-$(uname)-$(uname -m).sh && \
     mamba install --channel=conda-forge --name=base conda-lock=1.4 && \
     conda-lock install --name nisqa conda-lock.yml && \
