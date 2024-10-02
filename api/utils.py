@@ -1273,7 +1273,7 @@ def split_input_folder(
             shutil.copyfile(
                 file,
                 subfolder
-                / f"{str(Path(file).parent).replace('/','.').replace('\\','.')}.{Path(file).name}",
+                / f"{Path(file).parent.as_posix().replace('/','.')}.{Path(file).name}",
             )
             for file in files[start:end]
         ]
