@@ -409,6 +409,7 @@ class ReportLog(Document):
     collection: Union[UUID, str, None] = None
     external_input: Union[str, None] = None
     options: Union[ReportOptions, None] = ReportOptions()
+    metadata: Union[dict, None] = None
     file_id: Union[UUID, str, None] = None
     filename: Union[str, None] = None
     modified: datetime = Field(default_factory=datetime.now)

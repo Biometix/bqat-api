@@ -760,6 +760,15 @@ async def generate_report(
     options: ReportOptions = Body(...),
 ):
     found = await ReportLog.find_one(ReportLog.collection == dataset_id)
+    metadata = (await TaskLog.find_one({"collection": dataset_id})).options
+    metadata.update(
+        {
+            "length": int(
+                (await TaskLog.find_one(TaskLog.collection == dataset_id)).finished
+                * options.downsample
+            ),
+        }
+    )
     log = await ReportLog.find_one(ReportLog.collection == dataset_id).upsert(
         Set(
             {
@@ -767,11 +776,13 @@ async def generate_report(
                 ReportLog.options.downsample: options.downsample,
                 ReportLog.file_id: None,
                 ReportLog.filename: None,
+                ReportLog.metadata: metadata,
             }
         ),
         on_insert=ReportLog(
             collection=dataset_id,
             options=options,
+            metadata=metadata,
         ),
         response_type=UpdateResponse.NEW_DOCUMENT,
     )
@@ -1163,6 +1174,8 @@ async def generate_remote_report(
     request: Request,
     background_tasks: BackgroundTasks,
     trigger: bool = True,
+    minimal: bool = False,
+    downsample: float = 1,
 ):
     if not os.path.exists(Settings().TEMP):
         os.mkdir(Settings().TEMP)
@@ -1174,7 +1187,7 @@ async def generate_remote_report(
 
     task = await ReportLog(
         external_input=file_path,
-        options=ReportOptions(),
+        options=ReportOptions(minimal=minimal, downsample=downsample),
     ).insert()
 
     if trigger:

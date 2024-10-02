@@ -45,9 +45,9 @@ from api.config.models import (
     FaceSpecOFIQ,
     FingerprintSpecDefault,
     IrisSpecDefault,
-    SpeechSpecDefault,
     # DetectorOptions,
     # ReportLog,
+    SpeechSpecDefault,
     Status,
     TaskQueue,
 )
@@ -205,8 +205,10 @@ async def run_scan_tasks(
                 task_progress = p.add_task(
                     "[cyan]Executing task...", total=task.get("total")
                 )
+                batch_no = 0
                 for folder in pending:
                     batch_start = time.time()
+                    batch_no += 1
                     batch_task = [scan_task.remote(folder, options)]
                     await log["tasks"].find_one_and_update(
                         {"tid": tid},
@@ -218,13 +220,15 @@ async def run_scan_tasks(
                         },
                     )
                     batch = len(get_files(folder))
-                    print(f">> Batch size: {batch}")
+                    print(f">> Batch {batch_no}, size: {batch}")
                     try:
                         ready, not_ready = ray.wait(batch_task, timeout=1)
                         while not_ready:
                             await asyncio.sleep(3)
                             ready, not_ready = ray.wait(not_ready, timeout=0.1)
-                            print(f"{datetime.now()}: processing...")
+                            print(
+                                f">> Processing batch {batch_no}, elapse: {time.time() - batch_start:.2f}..."
+                            )
                         outputs = ray.get(batch_task)
                         await log["tasks"].find_one_and_update(
                             {"tid": tid},
@@ -643,6 +647,7 @@ async def run_report_tasks(
         print(f">> Generate report: {dataset_id}")
 
         options = task.get("options")
+        options.update({"collection": dataset_id})
         if not external:
             dataset_log = await log["datasets"].find_one({"collection": dataset_id})
             options.update(
@@ -681,15 +686,13 @@ async def run_report_tasks(
             )
             return
         fs = AsyncIOMotorGridFSBucket(log)
+
+        filename = f"report_{dataset_id}.html"
+
         file_id = await fs.upload_from_stream(
-            f"report_{dataset_id}",
+            filename,
             html_content.encode(),
             metadata={"contentType": "text/plain"},
-        )
-        filename = (
-            f"report_{dataset_id}_minimal"
-            if task["options"].get("minimal")
-            else f"report_{dataset_id}"
         )
 
         collection = str(task["tid"]) if external else dataset_id
@@ -1267,7 +1270,11 @@ def split_input_folder(
         start = i * batch_size
         end = start + batch_size
         [
-            shutil.copyfile(file, subfolder / Path(file).name)
+            shutil.copyfile(
+                file,
+                subfolder
+                / f"{str(Path(file).parent).replace('/','.').replace('\\','.')}.{Path(file).name}",
+            )
             for file in files[start:end]
         ]
     return subfolders
