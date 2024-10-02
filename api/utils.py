@@ -1204,16 +1204,15 @@ def get_tag(identifier):
 def get_outliers(data: list, detector: str = "ECOD"):
     match detector:
         case "ECOD":
-            clf = ECOD()
-            # clf = ECOD(n_jobs=8)
+            clf = ECOD(n_jobs=-1)
         case "CBLOF":
-            clf = CBLOF()
+            clf = CBLOF(n_jobs=-1)
         case "IForest":
-            clf = IForest()
+            clf = IForest(n_jobs=-1)
         case "KNN":
-            clf = KNN()
+            clf = KNN(n_jobs=-1)
         case "COPOD":
-            clf = COPOD()
+            clf = COPOD(n_jobs=-1)
         case "PCA":
             clf = PCA()
         # case "DeepSVDD":
@@ -1222,7 +1221,7 @@ def get_outliers(data: list, detector: str = "ECOD"):
         #     clf = DIF()
         case _:
             print(f"detector: {detector} not recognized, fallback to ECOD.")
-            clf = ECOD()
+            clf = ECOD(n_jobs=-1)
 
     clf.fit(pd.DataFrame.from_records(data))
     labels = clf.labels_
