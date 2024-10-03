@@ -55,7 +55,7 @@ from bqat.bqat_core import __name__, __version__
 from bqat.bqat_core import scan as process
 
 
-@ray.remote
+@ray.remote(num_cpus=Settings().CPU_RESERVE_PER_TASK)
 def scan_task(path, options):
     try:
         if options.get("engine") == "ofiq" and options.get("type") == "folder":
@@ -220,14 +220,14 @@ async def run_scan_tasks(
                         },
                     )
                     batch = len(get_files(folder))
-                    print(f">> Batch {batch_no}, size: {batch}")
+                    print(f">> Batch {batch_no}/{len(pending)}, size: {batch}")
                     try:
                         ready, not_ready = ray.wait(batch_task, timeout=1)
                         while not_ready:
                             await asyncio.sleep(3)
                             ready, not_ready = ray.wait(not_ready, timeout=0.1)
                             print(
-                                f">> Processing batch {batch_no}, elapse: {time.time() - batch_start:.2f}..."
+                                f">> Processing batch {batch_no}, elapse: {time.time() - batch_start:.2f}/{time.time() - task_timer:.2f}..."
                             )
                         outputs = ray.get(batch_task)
                         await log["tasks"].find_one_and_update(
@@ -499,18 +499,23 @@ async def run_scan_tasks(
                             ready, not_ready = ray.wait(
                                 tasks,
                                 num_returns=step,
-                                timeout=0.1,
+                                timeout=3,
                             )
                             while not ready and not_ready:
+                                print(f"{step= }")
                                 ready, not_ready = ray.wait(
                                     tasks,
                                     num_returns=step,
-                                    timeout=0.1,
+                                    timeout=3,
                                 )
                                 step -= int(0.2 * step)
-                                if step < 1:
-                                    step = 1
                             results = ray.get(ready)
+                            if len(results) < step:
+                                step -= len(results)
+                            else:
+                                step += int(0.2 * step)
+                            if step < 1:
+                                step = 1
                     except ray.exceptions.TaskCancelledError:
                         print(f"Task was cancelled: {tid}")
                         await log["tasks"].find_one_and_update(
@@ -526,7 +531,6 @@ async def run_scan_tasks(
                         return
                     if not results:
                         break
-                    step += int(0.2 * step)
                     counter += len(ready)
 
                     await scan[collection].insert_many(results)

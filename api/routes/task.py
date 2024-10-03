@@ -435,7 +435,8 @@ async def cancel_task(
             print(f"Failed to cancel task: {str(e)}")
         log.task_refs.remove(task)
     log.task_refs = []
-    await log.save()
+    # await log.save()
+    await log.delete()
 
 
 @router.get("/metadata", response_description="Metadata of pending tasks retrieved",description="Returns information about pending tasks across different types (scan, report, outlier, preprocessing), including the number of pending tasks and their type."
