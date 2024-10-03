@@ -60,4 +60,4 @@ class DatabaseSettings(BaseSettings):
 
 class Settings(CommonSettings, ServerSettings, DatabaseSettings):
     DATA: str = "data/"
-    # CPU_RESERVE: int = 2
+    CPU_RESERVE_PER_TASK: float = 1.1
