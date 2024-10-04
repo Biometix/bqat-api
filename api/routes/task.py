@@ -1,6 +1,7 @@
 import json
 import pickle
 from pathlib import Path
+from typing import Union
 from uuid import UUID
 
 import ray
@@ -424,16 +425,18 @@ async def cancel_task(
             raise HTTPException(status_code=400, detail="Task type not recognised!")
 
     if not log:
-        raise HTTPException(status_code=404, detail="Task not found!")
-    for task in log.task_refs:
-        try:
-            ray.cancel(pickle.loads(task))
-        except TypeError as e:
-            # print(f"Task not found: {str(e)}")
-            pass
-        except Exception as e:
-            print(f"Failed to cancel task: {str(e)}")
-        log.task_refs.remove(task)
+        # raise HTTPException(status_code=404, detail="Task not found!")
+        ray.shutdown()
+    else:
+        for task in log.task_refs:
+            try:
+                ray.cancel(pickle.loads(task))
+            except TypeError as e:
+                # print(f"Task not found: {str(e)}")
+                pass
+            except Exception as e:
+                print(f"Failed to cancel task: {str(e)}")
+            log.task_refs.remove(task)
     log.task_refs = []
     # await log.save()
     await log.delete()
@@ -498,16 +501,18 @@ async def abort_task_queue(
             await log.save()
 
     if not ray_tasks:
-        raise HTTPException(status_code=404, detail="Task not found!")
-    for task in ray_tasks:
-        try:
-            ray.cancel(pickle.loads(task))
-        except TypeError as e:
-            # print(f"Task not found: {str(e)}")
-            pass
-        except Exception as e:
-            print(f"Failed to abort task: {str(e)}")
-    return {"Tasks aborted": len(ray_tasks)}
+        # raise HTTPException(status_code=404, detail="Task not found!")
+        ray.shutdown()
+    else:
+        for task in ray_tasks:
+            try:
+                ray.cancel(pickle.loads(task))
+            except TypeError as e:
+                # print(f"Task not found: {str(e)}")
+                pass
+            except Exception as e:
+                print(f"Failed to abort task: {str(e)}")
+    return {"Tasks aborted": len(ray_tasks) if len(ray_tasks) else "-1"}
 
 
 @router.post(
@@ -604,22 +609,29 @@ async def start_preprocessing_queue(
 
 
 @router.get(
-    "/inputs",
-    response_description="Input folders retrieved",
+    "/inputs/metadata",
+    response_description="Input folder metadata retrieved",
 )
-async def get_input_folders(
+async def get_input_folder_metadata(
     exts: list[str] = Query(
         ["jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav"],
-        description="File extensions to be included in the search.",
+        description="File extensions to search for.",
     ),
-    pattern: str = Query("", 
-        description="File name pattern to be included in the search.")
-):
-    """Returns a list of directories in the data directory.
+    pattern: str = Query(
+        "",
+        description="Filename patterns to search for.",
+    ),
+    path: Path = Query(
+        f"{Settings().DATA}",
+        description="Directory to search for files.",
+    ),
+) -> list[dict[str, Union[int, Path]]]:
+    """Returns a list of folders in the input data folder.
 
     Args:
-    - **exts (list[str], optional)**: File extensions to be included.
-    - **pattern (str, optional)**: File name pattern to be included.
+    - **exts (list[str], optional)**: File extensions as list.
+    - **pattern (str, optional)**: Filename pattern regex string.
+    - **path (Path, optional)**: Directory to search for files.
 
     Returns:
 
@@ -627,7 +639,7 @@ async def get_input_folders(
     [
         {
             "dir": "data/helen",
-            "count": 2898
+            "count": 2898,
         },
         {
             "dir": "data/bob",
@@ -636,18 +648,67 @@ async def get_input_folders(
     ]
     ```
     """
-    return [
+    metadata_list = [
         {
-            "dir": dir,
+            "dir": path.as_posix(),
             "count": len(
                 [
                     item
-                    for item in dir.rglob('*')
-                    if item.is_file() and (pattern == "" or item.match(f"*{pattern}{item.suffix}"))
+                    for item in path.rglob("*")
+                    if item.is_file()
+                    and (pattern == "" or item.match(f"*{pattern}{item.suffix}"))
                     and len(item.suffix.lower().split(".")) == 2
                     and item.suffix.lower().split(".")[1] in exts
                 ]
+            ),
+        }
+    ]
+    for dir in path.rglob("*"):
+        if dir.is_dir():
+            metadata_list.append(
+                {
+                    "dir": dir.as_posix(),
+                    "count": len(
+                        [
+                            item
+                            for item in dir.rglob("*")
+                            if item.is_file()
+                            and (
+                                pattern == "" or item.match(f"*{pattern}{item.suffix}")
+                            )
+                            and len(item.suffix.lower().split(".")) == 2
+                            and item.suffix.lower().split(".")[1] in exts
+                        ]
+                    ),
+                }
             )
+
+    return metadata_list
+
+
+@router.get(
+    "/inputs/folders",
+    response_description="Input folders retrieved",
+)
+async def get_input_folders() -> list[dict[str, str]]:
+    """Returns a list of folders in the input data directory.
+
+    Returns:
+
+    ```json
+    [
+        {
+            "dir": "data/helen",
+        },
+        {
+            "dir": "data/bob",
+        },
+    ]
+    ```
+    """
+    return [
+        {
+            "dir": dir.as_posix(),
         }
         for dir in Path(Settings().DATA).rglob("*")
         if dir.is_dir()

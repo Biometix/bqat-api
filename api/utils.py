@@ -210,15 +210,27 @@ async def run_scan_tasks(
                     batch_start = time.time()
                     batch_no += 1
                     batch_task = [scan_task.remote(folder, options)]
-                    await log["tasks"].find_one_and_update(
-                        {"tid": tid},
-                        {
-                            "$set": {
-                                "status": 1,
-                                "task_refs": [Binary(pickle.dumps(batch_task[0]))],
-                            }
-                        },
-                    )
+                    try:
+                        await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$set": {
+                                    "status": 1,
+                                    "task_refs": [Binary(pickle.dumps(batch_task[0]))],
+                                }
+                            },
+                        )
+                    except Exception as e:
+                        print(f"Failed to insert task refs: {e}")
+                        await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$set": {
+                                    "status": 1,
+                                    "task_refs": [],
+                                }
+                            },
+                        )
                     batch = len(get_files(folder))
                     print(f">> Batch {batch_no}/{len(pending)}, size: {batch}")
                     try:
@@ -369,17 +381,29 @@ async def run_scan_tasks(
                             options,
                         )
                     )
-                    await log["tasks"].find_one_and_update(
-                        {"tid": tid},
-                        {
-                            "$set": {
-                                "status": 1,
-                                "task_refs": [
-                                    Binary(pickle.dumps(task)) for task in subtasks
-                                ],
-                            }
-                        },
-                    )
+                    try:
+                        await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$set": {
+                                    "status": 1,
+                                    "task_refs": [
+                                        Binary(pickle.dumps(task)) for task in subtasks
+                                    ],
+                                }
+                            },
+                        )
+                    except Exception as e:
+                        print(f"Failed to insert task refs: {e}")
+                        await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$set": {
+                                    "status": 1,
+                                    "task_refs": [],
+                                }
+                            },
+                        )
                     p.update(task_progress, completed=file_total)
 
                 with Progress(
@@ -471,15 +495,27 @@ async def run_scan_tasks(
                     p.update(task_progress, advance=1)
                     if p.finished:
                         break
-            await log["tasks"].find_one_and_update(
-                {"tid": tid},
-                {
-                    "$set": {
-                        "status": 1,
-                        "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
-                    }
-                },
-            )
+            try:
+                await log["tasks"].find_one_and_update(
+                    {"tid": tid},
+                    {
+                        "$set": {
+                            "status": 1,
+                            "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
+                        }
+                    },
+                )
+            except Exception as e:
+                print(f"Failed to insert task refs: {e}")
+                await log["tasks"].find_one_and_update(
+                    {"tid": tid},
+                    {
+                        "$set": {
+                            "status": 1,
+                            "task_refs": [],
+                        }
+                    },
+                )
 
             step = 100
             counter = 0
