@@ -381,7 +381,7 @@ async def run_scan_tasks(
                             }
                         },
                     )
-                    await cache.set(
+                    await cache.rpush(
                         "task_refs",
                         *[pickle.dumps(task) for task in subtasks],
                     )

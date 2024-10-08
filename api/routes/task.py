@@ -407,10 +407,11 @@ async def cancel_task(
 ):
     queue = request.app.queue
     cache = request.app.cache
+    log = request.app.log
 
-    while await queue.llen("task_queue") > 0:
-        tid = await queue.rpop("task_queue")
-        await queue.delete(tid)
+    await queue.lrem("task_queue", 1, task_id)
+    await queue.delete(task_id)
+    await log["samples"].delete_many({"tid": task_id})
 
     match type:
         case "scan":
@@ -425,19 +426,21 @@ async def cancel_task(
             raise HTTPException(status_code=400, detail="Task type not recognised!")
 
     if not log:
-        # ray.shutdown()
         raise HTTPException(status_code=404, detail="Task not found!")
     elif not (task_refs := await cache.lrange("task_refs", 0, -1)):
         return {"message": "No tasks is running!"}
     else:
-        for task in task_refs:
-            try:
-                ray.cancel(pickle.loads(task))
-            except TypeError as e:
-                # print(f"Task not found: {str(e)}")
-                pass
-            except Exception as e:
-                print(f"Failed to cancel task: {str(e)}")
+        if len(task_refs) < 10000:
+            for task in task_refs:
+                try:
+                    ray.cancel(pickle.loads(task))
+                except TypeError as e:
+                    # print(f"Task not found: {str(e)}")
+                    pass
+                except Exception as e:
+                    print(f"Failed to cancel task: {str(e)}")
+        else:
+            ray.shutdown()
 
     await cache.ltrim("task_refs", 1, 0)
     await log.delete()
@@ -453,10 +456,12 @@ async def cancel_all_tasks(
 ):
     queue = request.app.queue
     cache = request.app.cache
+    log = request.app.log
 
     while await queue.llen("task_queue") > 0:
         tid = await queue.rpop("task_queue")
         await queue.delete(tid)
+        await log["samples"].delete_many({"tid": tid})
 
     task_result = await TaskLog.find(TaskLog.status == Status.running).delete()
     report_result = await ReportLog.find(ReportLog.status == Status.running).delete()
@@ -467,14 +472,8 @@ async def cancel_all_tasks(
         PreprocessingLog.status == Status.running
     ).delete()
 
-    for task in await cache.lrange("task_refs", 0, -1):
-        try:
-            ray.cancel(pickle.loads(task))
-        except TypeError as e:
-            # print(f"Task not found: {str(e)}")
-            pass
-        except Exception as e:
-            print(f"Failed to cancel ray task: {str(e)}")
+    ray.shutdown()
+    await cache.ltrim("task_refs", 1, 0)
 
     return {
         "Tasks cancelled": f"{task_result.deleted_count + report_result.deleted_count + outlier_result.deleted_count + preprocessing_result.deleted_count}"
