@@ -44,10 +44,7 @@ services:
     environment:
       DEBUG_MODE: YES
       MGO_URL: mongodb://mongo:27017/
-      SCAN_DB: scan
-      LOG_DB: log
       RDS_URL: redis://redis:6379/
-      QUEUE_DB: 10
       DATA: data/
     volumes:
       - ./data:/app/data

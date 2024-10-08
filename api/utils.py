@@ -20,7 +20,8 @@ import ray
 
 # import wsq # Somehow it needs to be imported with in ray function
 from beanie import PydanticObjectId
-from bson.binary import Binary
+
+# from bson.binary import Binary
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pandas_profiling import ProfileReport
 from PIL import Image, ImageOps
@@ -150,6 +151,7 @@ async def run_scan_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     if task_id:
@@ -216,11 +218,10 @@ async def run_scan_tasks(
                         {
                             "$set": {
                                 "status": 1,
-                                # "task_refs": [Binary(pickle.dumps(batch_task[0]))],
                             }
                         },
                     )
-                    await queue.set("task_refs", [Binary(pickle.dumps(batch_task[0]))])
+                    await cache.rpush("task_refs", *[pickle.dumps(batch_task[0])])
 
                     batch = len(get_files(folder))
                     print(f">> Batch {batch_no}/{len(pending)}, size: {batch}")
@@ -238,23 +239,21 @@ async def run_scan_tasks(
                             {
                                 "$set": {
                                     "status": 2,
-                                    # "task_refs": [],
                                 }
                             },
                         )
-                        await queue.set("task_refs", [])
+                        await cache.ltrim("task_refs", 1, 0)
                     except ray.exceptions.TaskCancelledError:
                         print(f"Task was cancelled: {tid}")
                         await log["tasks"].find_one_and_update(
                             {"tid": task["tid"]},
                             {
                                 "$set": {
-                                    # "task_refs": [],
                                     "status": 0,
                                 },
                             },
                         )
-                        await queue.set("task_refs", [])
+                        await cache.ltrim("task_refs", 1, 0)
                         await queue.delete(tid)
                         return
                     batch_count = 0
@@ -269,12 +268,11 @@ async def run_scan_tasks(
                         {
                             "$set": {
                                 "status": 2,
-                                # "task_refs": [],
                                 "modified": datetime.now(),
                             }
                         },
                     )
-                    await queue.set("task_refs", [])
+                    await cache.ltrim("task_refs", 1, 0)
                     p.update(task_progress, advance=batch_count)
                     batch_timer = time.time() - batch_start
                     task = await log["tasks"].find_one_and_update(
@@ -318,12 +316,11 @@ async def run_scan_tasks(
                 {
                     "$set": {
                         "status": 2,
-                        # "task_refs": [],
                         "modified": datetime.now(),
                     }
                 },
             )
-            await queue.set("task_refs", [])
+            await cache.ltrim("task_refs", 1, 0)
             await queue.rpop("task_queue")
             await queue.delete(tid)
             await log["samples"].delete_many({"tid": tid})
@@ -381,15 +378,12 @@ async def run_scan_tasks(
                         {
                             "$set": {
                                 "status": 1,
-                                # "task_refs": [
-                                #     Binary(pickle.dumps(task)) for task in subtasks
-                                # ],
                             }
                         },
                     )
-                    await queue.set(
+                    await cache.set(
                         "task_refs",
-                        [Binary(pickle.dumps(task)) for task in subtasks],
+                        *[pickle.dumps(task) for task in subtasks],
                     )
 
                     p.update(task_progress, completed=file_total)
@@ -415,12 +409,11 @@ async def run_scan_tasks(
                             {"tid": task["tid"]},
                             {
                                 "$set": {
-                                    # "task_refs": [],
                                     "status": 0,
                                 },
                             },
                         )
-                        await queue.set("task_refs", [])
+                        await cache.ltrim("task_refs", 1, 0)
                         await queue.delete(tid)
                         return
                     for output in outputs:
@@ -453,12 +446,11 @@ async def run_scan_tasks(
                 {
                     "$set": {
                         "status": 2,
-                        # "task_refs": [],
                         "modified": datetime.now(),
                     }
                 },
             )
-            await queue.set("task_refs", [])
+            await cache.ltrim("task_refs", 1, 0)
             await queue.rpop("task_queue")
             await queue.delete(tid)
             await log["samples"].delete_many({"tid": tid})
@@ -491,11 +483,10 @@ async def run_scan_tasks(
                 {
                     "$set": {
                         "status": 1,
-                        # "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
                     }
                 },
             )
-            await queue.set("task_refs", [Binary(pickle.dumps(task)) for task in tasks])
+            await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
 
             step = 100
             counter = 0
@@ -538,12 +529,11 @@ async def run_scan_tasks(
                             {"tid": task["tid"]},
                             {
                                 "$set": {
-                                    # "task_refs": [],
                                     "status": 1,
                                 },
                             },
                         )
-                        await queue.set("task_refs", [])
+                        await cache.ltrim("task_refs", 1, 0)
                         await queue.delete(tid)
                         return
                     if not results:
@@ -606,12 +596,11 @@ async def run_scan_tasks(
                 {
                     "$set": {
                         "status": 2,
-                        # "task_refs": [],
                         "modified": datetime.now(),
                     }
                 },
             )
-            await queue.set("task_refs", [])
+            await cache.ltrim("task_refs", 1, 0)
             await queue.rpop("task_queue")
             await queue.delete(tid)
             await log["samples"].delete_many({"tid": tid})
@@ -626,8 +615,9 @@ async def run_scan_tasks(
         print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
         print(f">> Collection: {collection}")
 
-    if os.path.exists(Settings().TEMP):
-        shutil.rmtree(Settings().TEMP)
+    temp_folder = Path(Settings().TEMP) / f"{tid}"
+    if temp_folder.exists():
+        shutil.rmtree(temp_folder)
     print(">>> Finished <<<\n")
 
 
@@ -635,6 +625,7 @@ async def run_report_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     tasks = []
@@ -685,11 +676,10 @@ async def run_report_tasks(
             {
                 "$set": {
                     "status": 1,
-                    # "task_refs": [Binary(pickle.dumps(task)) for task in report],
                 },
             },
         )
-        await queue.set("task_refs", [Binary(pickle.dumps(task)) for task in report])
+        await cache.rpush("task_refs", *[pickle.dumps(task) for task in report])
         try:
             ready, not_ready = ray.wait(report, timeout=3)
             while not_ready:
@@ -702,12 +692,11 @@ async def run_report_tasks(
                 {"tid": task["tid"]},
                 {
                     "$set": {
-                        # "task_refs": [],
                         "status": 0,
                     },
                 },
             )
-            await queue.set("task_refs", [])
+            await cache.ltrim("task_refs", 1, 0)
             return
         fs = AsyncIOMotorGridFSBucket(log)
 
@@ -728,12 +717,11 @@ async def run_report_tasks(
                     "file_id": str(file_id),
                     "filename": filename,
                     "modified": datetime.now(),
-                    # "task_refs": [],
                     "status": 2,
                 }
             },
         )
-        await queue.set("task_refs", [])
+        await cache.ltrim("task_refs", 1, 0)
         await queue.rpop("task_queue")
 
         task_timer = time.time() - task_timer
@@ -747,6 +735,7 @@ async def run_outlier_detection_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     if task_id:
@@ -787,11 +776,10 @@ async def run_outlier_detection_tasks(
             {
                 "$set": {
                     "status": 1,
-                    # "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
                 },
             },
         )
-        await queue.set("task_refs", [Binary(pickle.dumps(task)) for task in tasks])
+        await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
         try:
             ready, not_ready = ray.wait(tasks, timeout=3)
             while not_ready:
@@ -804,7 +792,6 @@ async def run_outlier_detection_tasks(
                 {"tid": tid},
                 {
                     "$set": {
-                        # "task_refs": [],
                         "status": 0,
                     },
                 },
@@ -822,7 +809,6 @@ async def run_outlier_detection_tasks(
                 "$set": {
                     "outliers": outliers.to_dict("records"),
                     "modified": datetime.now(),
-                    # "task_refs": [],
                     "status": 2,
                 },
             },
@@ -839,6 +825,7 @@ async def run_outlier_detection_tasks(
 async def run_preprocessing_tasks(
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     if task_id:
@@ -916,11 +903,10 @@ async def run_preprocessing_tasks(
                 {
                     "$set": {
                         "status": 1,
-                        # "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
                     },
                 },
             )
-            await queue.set("task_refs", [Binary(pickle.dumps(task)) for task in tasks])
+            await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
 
         eta_step = 100  # ETA estimation interval
         counter = 0
@@ -945,12 +931,11 @@ async def run_preprocessing_tasks(
                         {"tid": tid},
                         {
                             "$set": {
-                                # "task_refs": [],
                                 "status": 0,
                             },
                         },
                     )
-                    await queue.set("task_refs", [])
+                    await cache.ltrim("task_refs", 1, 0)
                     return
                 p.update(task_progress, advance=len(ready))
                 counter += len(ready)
@@ -984,12 +969,11 @@ async def run_preprocessing_tasks(
                 "$set": {
                     "target": output_dir,
                     "modified": datetime.now(),
-                    # "task_refs": [],
                     "status": 2,
                 },
             },
         )
-        await queue.set("task_refs", [])
+        await cache.ltrim("task_refs", 1, 0)
         await queue.rpop("task_queue")
         await queue.delete(tid)
 

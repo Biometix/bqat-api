@@ -120,7 +120,7 @@ async def post_local_task(
     ).create()
 
     if modality == "face" and options.get("engine") == "ofiq":
-        temp_folder = Path(Settings().TEMP) / f"{uuid.uuid4()}"
+        temp_folder = Path(Settings().TEMP) / f"{task.tid}"
         if not temp_folder.exists():
             temp_folder.mkdir(parents=True, exist_ok=False)
         folders = split_input_folder(
@@ -151,6 +151,7 @@ async def post_local_task(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
             str(task.tid),
         )
 
@@ -183,7 +184,8 @@ async def post_remote_task(
             detail="please specify biometric modality",
         )
 
-    temp_folder = Path(Settings().TEMP) / f"{uuid.uuid4()}"
+    tid = uuid.uuid4()
+    temp_folder = Path(Settings().TEMP) / f"{tid}"
     if not temp_folder.exists():
         temp_folder.mkdir(parents=True, exist_ok=False)
 
@@ -213,6 +215,7 @@ async def post_remote_task(
         )
 
     task = await TaskLog(
+        tid=tid,
         collection=uuid.uuid4(),
         input=str(input),
         total=len(files),
@@ -248,6 +251,7 @@ async def post_remote_task(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
             str(task.tid),
         )
 
@@ -482,7 +486,6 @@ async def get_logs(request: Request) -> list:
             {},
             {
                 "_id": 0,
-                "task_refs": 0,
             },
         )
         .to_list(length=None)
@@ -704,6 +707,7 @@ async def detect_outliers(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
             str(log.tid),
         )
 
@@ -798,6 +802,7 @@ async def generate_report(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
             str(log.tid),
         )
 
@@ -875,6 +880,7 @@ async def post_preprocessing_task(
         run_preprocessing_tasks,
         request.app.log,
         request.app.queue,
+        request.app.cache,
         str(log.tid),
     )
 
@@ -896,7 +902,6 @@ async def get_preprocessing_task(
 ):
     task = await PreprocessingLog.find_one({"tid": task_id})
     data = task.model_dump()
-    data.pop("task_refs")
     if task.status == Status.done:
         return data
     else:
@@ -1049,14 +1054,18 @@ async def get_task_status(request: Request):
 )
 async def pause_queue(request: Request):
     queue = request.app.queue
+    cache = request.app.cache
+
     while await queue.llen("task_queue") > 0:
         tid = await queue.rpop("task_queue")
         await queue.delete(tid)
     await queue.delete("task_queue")
 
-    for task in await queue.get("task_refs"):
+    cancelled = 0
+    for task in await cache.lrange("task_refs", 0, -1):
         try:
             ray.cancel(pickle.loads(task))
+            cancelled += 1
         except TypeError as e:
             # print(f"Task not found: {str(e)}")
             pass
@@ -1065,7 +1074,7 @@ async def pause_queue(request: Request):
 
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
-        content={"message": "Successful, task queue paused."},
+        content={"message": f"Successful, task queue paused: {cancelled}"},
     )
 
 
@@ -1104,7 +1113,11 @@ async def resume_queue(request: Request, background_tasks: BackgroundTasks):
         > 0
     ):
         background_tasks.add_task(
-            run_scan_tasks, request.app.scan, request.app.log, request.app.queue
+            run_scan_tasks,
+            request.app.scan,
+            request.app.log,
+            request.app.queue,
+            request.app.cache,
         )
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
@@ -1141,6 +1154,7 @@ async def resume_task(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
             task_id,
         )
         return JSONResponse(
@@ -1208,6 +1222,7 @@ async def generate_remote_report(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
             str(task.tid),
         )
 

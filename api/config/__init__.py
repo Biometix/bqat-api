@@ -51,10 +51,11 @@ class ServerSettings(BaseSettings):
 
 class DatabaseSettings(BaseSettings):
     MGO_URL: str
-    SCAN_DB: str
-    LOG_DB: str
+    SCAN_DB: str = "scan"
+    LOG_DB: str = "log"
     RDS_URL: str
-    QUEUE_DB: str
+    QUEUE_DB: int = 10
+    CACHE_DB: int = 11
     TEMP: str = "/tmp/bqat/"
 
 

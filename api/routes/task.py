@@ -48,7 +48,6 @@ async def get_all_task_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -81,7 +80,6 @@ async def get_all_report_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "metadata": 1,
@@ -114,7 +112,6 @@ async def get_all_outlier_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -143,7 +140,6 @@ async def get_all_preprocessing_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "status": 1,
@@ -176,7 +172,6 @@ async def get_task_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -212,7 +207,6 @@ async def get_report_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "metadata": 1,
@@ -248,7 +242,6 @@ async def get_outlier_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -280,7 +273,6 @@ async def get_preprocessing_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "status": 1,
@@ -321,7 +313,10 @@ async def get_task_status(
 #     return log
 
 
-@router.delete("/{task_id}/", response_description="Task log removed",description="Deletes a task log identified by its task ID, including removing it from the task queue in Redis."
+@router.delete(
+    "/{task_id}",
+    response_description="Task log removed",
+    description="Deletes a task log identified by its task ID, including removing it from the task queue in Redis.",
 )
 async def delete_task_log(request: Request, task_id: UUID) -> dict:
     log = await TaskLog.find_one(TaskLog.tid == str(task_id))
@@ -400,7 +395,10 @@ async def pop_queue_item(request: Request) -> dict:
 #     return await run_test_tasks()
 
 
-@router.post("/{task_id}/cancel", response_description="Task canceled",description="Cancels all tasks of a specified type (scan, report, outlier, preprocessing) with a given task ID, removing them from the task queue and cancelling any associated tasks."
+@router.post(
+    "/cancel/{task_id}",
+    response_description="Task canceled",
+    description="Cancels all tasks of a specified type (scan, report, outlier, preprocessing) with a given task ID, removing them from the task queue and cancelling any associated tasks.",
 )
 async def cancel_task(
     request: Request,
@@ -408,6 +406,8 @@ async def cancel_task(
     type: str,
 ):
     queue = request.app.queue
+    cache = request.app.cache
+
     while await queue.llen("task_queue") > 0:
         tid = await queue.rpop("task_queue")
         await queue.delete(tid)
@@ -427,7 +427,7 @@ async def cancel_task(
     if not log:
         # ray.shutdown()
         raise HTTPException(status_code=404, detail="Task not found!")
-    elif not (task_refs := await queue.get("task_refs")):
+    elif not (task_refs := await cache.lrange("task_refs", 0, -1)):
         return {"message": "No tasks is running!"}
     else:
         for task in task_refs:
@@ -439,8 +439,46 @@ async def cancel_task(
             except Exception as e:
                 print(f"Failed to cancel task: {str(e)}")
 
-    await queue.set("task_refs", [])
+    await cache.ltrim("task_refs", 1, 0)
     await log.delete()
+
+
+@router.post(
+    "/cancel",
+    response_description="All tasks cancelled",
+    description="Cancels and clears all tasks in the task queue, including scanning, reporting, outlier detection, and preprocessing tasks, and returns the number of tasks aborted.",
+)
+async def cancel_all_tasks(
+    request: Request,
+):
+    queue = request.app.queue
+    cache = request.app.cache
+
+    while await queue.llen("task_queue") > 0:
+        tid = await queue.rpop("task_queue")
+        await queue.delete(tid)
+
+    task_result = await TaskLog.find(TaskLog.status == Status.running).delete()
+    report_result = await ReportLog.find(ReportLog.status == Status.running).delete()
+    outlier_result = await OutlierDetectionLog.find(
+        OutlierDetectionLog.status == Status.running
+    ).delete()
+    preprocessing_result = await PreprocessingLog.find(
+        PreprocessingLog.status == Status.running
+    ).delete()
+
+    for task in await cache.lrange("task_refs", 0, -1):
+        try:
+            ray.cancel(pickle.loads(task))
+        except TypeError as e:
+            # print(f"Task not found: {str(e)}")
+            pass
+        except Exception as e:
+            print(f"Failed to cancel ray task: {str(e)}")
+
+    return {
+        "Tasks cancelled": f"{task_result.deleted_count + report_result.deleted_count + outlier_result.deleted_count + preprocessing_result.deleted_count}"
+    }
 
 
 @router.get(
@@ -474,42 +512,6 @@ async def get_pending_tasks():
 
 
 @router.post(
-    "/all/cancel",
-    response_description="All tasks cancelled",
-    description="Cancels and clears all tasks in the task queue, including scanning, reporting, outlier detection, and preprocessing tasks, and returns the number of tasks aborted.",
-)
-async def abort_task_queue(
-    request: Request,
-):
-    queue = request.app.queue
-    while await queue.llen("task_queue") > 0:
-        tid = await queue.rpop("task_queue")
-        await queue.delete(tid)
-
-    task_result = await TaskLog.delete_many(TaskLog.status == Status.running)
-    report_result = await ReportLog.delete_many(ReportLog.status == Status.running)
-    outlier_result = await OutlierDetectionLog.delete_many(
-        OutlierDetectionLog.status == Status.running
-    )
-    preprocessing_result = await PreprocessingLog.delete_many(
-        PreprocessingLog.status == Status.running
-    )
-
-    for task in await queue.get("task_refs"):
-        try:
-            ray.cancel(pickle.loads(task))
-        except TypeError as e:
-            # print(f"Task not found: {str(e)}")
-            pass
-        except Exception as e:
-            print(f"Failed to cancel ray task: {str(e)}")
-
-    return {
-        "Tasks cancelled": f"{task_result.deleted_count + report_result.deleted_count + outlier_result.deleted_count + preprocessing_result.deleted_count}"
-    }
-
-
-@router.post(
     "/report/start",
     response_description="Report task queue resumed",
     description="Starts processing pending report tasks in the queue by initiating background tasks to run report generation."
@@ -529,6 +531,7 @@ async def start_report_queue(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
         )
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
@@ -560,6 +563,7 @@ async def start_outlier_queue(
             request.app.scan,
             request.app.log,
             request.app.queue,
+            request.app.cache,
         )
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
@@ -590,6 +594,7 @@ async def start_preprocessing_queue(
             run_preprocessing_tasks,
             request.app.log,
             request.app.queue,
+            request.app.cache,
         )
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
@@ -655,7 +660,7 @@ async def get_input_folder_metadata(
     "/inputs/folders",
     response_description="Input folders retrieved",
 )
-async def get_input_folders() -> list[dict[str, str]]:
+async def get_input_folders() -> list[str]:
     """Returns a list of folders in the input data directory.
 
     Returns:
