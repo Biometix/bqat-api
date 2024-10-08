@@ -1,10 +1,12 @@
 import json
 import os
+import pickle
 import shutil
 import uuid
 from pathlib import Path
 from typing import List
 
+import ray
 from beanie.odm.operators.update.general import Set
 from beanie.odm.queries.update import UpdateResponse
 from fastapi import (
@@ -1051,33 +1053,43 @@ async def pause_queue(request: Request):
         tid = await queue.rpop("task_queue")
         await queue.delete(tid)
     await queue.delete("task_queue")
+
+    for task in await queue.get("task_refs"):
+        try:
+            ray.cancel(pickle.loads(task))
+        except TypeError as e:
+            # print(f"Task not found: {str(e)}")
+            pass
+        except Exception as e:
+            print(f"Failed to cancel ray task: {str(e)}")
+
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={"message": "Successful, task queue paused."},
     )
 
 
-@router.post("/pause/{task_id}", response_description="Task paused",description="Pauses a specific task identified by its task ID from the task queue."
-)
-async def pause_task(
-    task_id: str,
-    request: Request,
-):
-    queue = request.app.queue
-    task_list = []
-    while await queue.llen("task_queue") > 0:
-        tid = await queue.rpop("task_queue")
-        if tid == task_id:
-            await queue.delete(tid)
-        else:
-            task_list.append(tid)
+# @router.post("/pause/{task_id}", response_description="Task paused",description="Pauses a specific task identified by its task ID from the task queue."
+# )
+# async def pause_task(
+#     task_id: str,
+#     request: Request,
+# ):
+#     queue = request.app.queue
+#     task_list = []
+#     while await queue.llen("task_queue") > 0:
+#         tid = await queue.rpop("task_queue")
+#         if tid == task_id:
+#             await queue.delete(tid)
+#         else:
+#             task_list.append(tid)
 
-    [await queue.lpush("task_queue", tid) for tid in task_list]
+#     [await queue.lpush("task_queue", tid) for tid in task_list]
 
-    return JSONResponse(
-        status_code=status.HTTP_202_ACCEPTED,
-        content={"message": f"Successful, task [{task_id}] paused."},
-    )
+#     return JSONResponse(
+#         status_code=status.HTTP_202_ACCEPTED,
+#         content={"message": f"Successful, task [{task_id}] paused."},
+#     )
 
 
 @router.post("/resume", response_description="Task queue resumed",description="Resumes processing tasks in the task queue if there are pending tasks."

@@ -14,7 +14,7 @@ from api.config.models import (
     OutlierDetectionLog,
     PreprocessingLog,
     ReportLog,
-    # Status,
+    Status,
     TaskLog,
 )
 from api.utils import (
@@ -48,7 +48,7 @@ async def get_all_task_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -81,7 +81,7 @@ async def get_all_report_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "metadata": 1,
@@ -114,7 +114,7 @@ async def get_all_outlier_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -143,7 +143,7 @@ async def get_all_preprocessing_logs(request: Request) -> list:
             [
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "status": 1,
@@ -176,7 +176,7 @@ async def get_task_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -212,7 +212,7 @@ async def get_report_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "metadata": 1,
@@ -248,7 +248,7 @@ async def get_outlier_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "collection": 1,
@@ -280,7 +280,7 @@ async def get_preprocessing_log(request: Request, task_id: str) -> list:
                 },
                 {
                     "$project": {
-                        "pending_tasks": {"$size": "$task_refs"},
+                        # "pending_tasks": {"$size": "$task_refs"},
                         "_id": 0,
                         "options": 1,
                         "status": 1,
@@ -425,10 +425,12 @@ async def cancel_task(
             raise HTTPException(status_code=400, detail="Task type not recognised!")
 
     if not log:
-        # raise HTTPException(status_code=404, detail="Task not found!")
-        ray.shutdown()
+        # ray.shutdown()
+        raise HTTPException(status_code=404, detail="Task not found!")
+    elif not (task_refs := await queue.get("task_refs")):
+        return {"message": "No tasks is running!"}
     else:
-        for task in log.task_refs:
+        for task in task_refs:
             try:
                 ray.cancel(pickle.loads(task))
             except TypeError as e:
@@ -436,38 +438,45 @@ async def cancel_task(
                 pass
             except Exception as e:
                 print(f"Failed to cancel task: {str(e)}")
-            log.task_refs.remove(task)
-    log.task_refs = []
-    # await log.save()
+
+    await queue.set("task_refs", [])
     await log.delete()
 
 
-@router.get("/metadata", response_description="Metadata of pending tasks retrieved",description="Returns information about pending tasks across different types (scan, report, outlier, preprocessing), including the number of pending tasks and their type."
+@router.get(
+    "/metadata",
+    response_description="Metadata of pending tasks retrieved",
+    description="Returns information about pending tasks.",
 )
 async def get_pending_tasks():
-    if log := await TaskLog.find_one(TaskLog.task_refs != []):
+    if log := await TaskLog.find_one(TaskLog.status == Status.running):
         log = dict(log)
         log["type"] = "scan"
-    elif log := await ReportLog.find_one(ReportLog.task_refs != []):
+    elif log := await ReportLog.find_one(ReportLog.task_refs == Status.running):
         log = dict(log)
         log["type"] = "report"
-    elif log := await OutlierDetectionLog.find_one(OutlierDetectionLog.task_refs != []):
+    elif log := await OutlierDetectionLog.find_one(
+        OutlierDetectionLog.task_refs == Status.running
+    ):
         log = dict(log)
         log["type"] = "outlier"
-    elif log := await PreprocessingLog.find_one(PreprocessingLog.task_refs != []):
+    elif log := await PreprocessingLog.find_one(
+        PreprocessingLog.task_refs == Status.running
+    ):
         log = dict(log)
         log["type"] = "preprocessing"
     else:
         return {}
 
-    log["pending_tasks"] = len(log["task_refs"])
-    log.pop("task_refs")
     log.pop("id")
     log.pop("revision_id")
     return log
 
 
-@router.post("/abort", response_description="All tasks aborted",description="Cancels and clears all tasks in the task queue, including scanning, reporting, outlier detection, and preprocessing tasks, and returns the number of tasks aborted."
+@router.post(
+    "/all/cancel",
+    response_description="All tasks cancelled",
+    description="Cancels and clears all tasks in the task queue, including scanning, reporting, outlier detection, and preprocessing tasks, and returns the number of tasks aborted.",
 )
 async def abort_task_queue(
     request: Request,
@@ -477,42 +486,27 @@ async def abort_task_queue(
         tid = await queue.rpop("task_queue")
         await queue.delete(tid)
 
-    ray_tasks = []
+    task_result = await TaskLog.delete_many(TaskLog.status == Status.running)
+    report_result = await ReportLog.delete_many(ReportLog.status == Status.running)
+    outlier_result = await OutlierDetectionLog.delete_many(
+        OutlierDetectionLog.status == Status.running
+    )
+    preprocessing_result = await PreprocessingLog.delete_many(
+        PreprocessingLog.status == Status.running
+    )
 
-    if logs := await TaskLog.find_many(TaskLog.task_refs != []).to_list():
-        for log in logs:
-            ray_tasks.extend(log.task_refs)
-            log.task_refs = []
-            await log.save()
-    if logs := await ReportLog.find_many(TaskLog.task_refs != []).to_list():
-        for log in logs:
-            ray_tasks.extend(log.task_refs)
-            log.task_refs = []
-            await log.save()
-    if logs := await OutlierDetectionLog.find_many(TaskLog.task_refs != []).to_list():
-        for log in logs:
-            ray_tasks.extend(log.task_refs)
-            log.task_refs = []
-            await log.save()
-    if logs := await PreprocessingLog.find_many(TaskLog.task_refs != []).to_list():
-        for log in logs:
-            ray_tasks.extend(log.task_refs)
-            log.task_refs = []
-            await log.save()
+    for task in await queue.get("task_refs"):
+        try:
+            ray.cancel(pickle.loads(task))
+        except TypeError as e:
+            # print(f"Task not found: {str(e)}")
+            pass
+        except Exception as e:
+            print(f"Failed to cancel ray task: {str(e)}")
 
-    if not ray_tasks:
-        # raise HTTPException(status_code=404, detail="Task not found!")
-        ray.shutdown()
-    else:
-        for task in ray_tasks:
-            try:
-                ray.cancel(pickle.loads(task))
-            except TypeError as e:
-                # print(f"Task not found: {str(e)}")
-                pass
-            except Exception as e:
-                print(f"Failed to abort task: {str(e)}")
-    return {"Tasks aborted": len(ray_tasks) if len(ray_tasks) else "-1"}
+    return {
+        "Tasks cancelled": f"{task_result.deleted_count + report_result.deleted_count + outlier_result.deleted_count + preprocessing_result.deleted_count}"
+    }
 
 
 @router.post(
@@ -625,7 +619,7 @@ async def get_input_folder_metadata(
         f"{Settings().DATA}",
         description="Directory to search for files.",
     ),
-) -> list[dict[str, Union[int, Path]]]:
+) -> dict[str, Union[int, Path]]:
     """Returns a list of folders in the input data folder.
 
     Args:
@@ -636,54 +630,25 @@ async def get_input_folder_metadata(
     Returns:
 
     ```json
-    [
         {
             "dir": "data/helen",
             "count": 2898,
-        },
-        {
-            "dir": "data/bob",
-            "count": 3446
-        },
-    ]
+        }
     ```
     """
-    metadata_list = [
-        {
-            "dir": path.as_posix(),
-            "count": len(
-                [
-                    item
-                    for item in path.rglob("*")
-                    if item.is_file()
-                    and (pattern == "" or item.match(f"*{pattern}{item.suffix}"))
-                    and len(item.suffix.lower().split(".")) == 2
-                    and item.suffix.lower().split(".")[1] in exts
-                ]
-            ),
-        }
-    ]
-    for dir in path.rglob("*"):
-        if dir.is_dir():
-            metadata_list.append(
-                {
-                    "dir": dir.as_posix(),
-                    "count": len(
-                        [
-                            item
-                            for item in dir.rglob("*")
-                            if item.is_file()
-                            and (
-                                pattern == "" or item.match(f"*{pattern}{item.suffix}")
-                            )
-                            and len(item.suffix.lower().split(".")) == 2
-                            and item.suffix.lower().split(".")[1] in exts
-                        ]
-                    ),
-                }
-            )
-
-    return metadata_list
+    return {
+        "dir": path.as_posix(),
+        "count": len(
+            [
+                item
+                for item in path.rglob("*")
+                if item.is_file()
+                and (pattern == "" or item.match(f"{pattern}{item.suffix}"))
+                and len(item.suffix.lower().split(".")) == 2
+                and item.suffix.lower().split(".")[1] in exts
+            ]
+        ),
+    }
 
 
 @router.get(
@@ -697,19 +662,9 @@ async def get_input_folders() -> list[dict[str, str]]:
 
     ```json
     [
-        {
-            "dir": "data/helen",
-        },
-        {
-            "dir": "data/bob",
-        },
+        "data/helen",
+        "data/bob",
     ]
     ```
     """
-    return [
-        {
-            "dir": dir.as_posix(),
-        }
-        for dir in Path(Settings().DATA).rglob("*")
-        if dir.is_dir()
-    ]
+    return [dir.as_posix() for dir in Path(Settings().DATA).rglob("*") if dir.is_dir()]

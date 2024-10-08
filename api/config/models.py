@@ -414,7 +414,6 @@ class ReportLog(Document):
     filename: Union[str, None] = None
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
-    task_refs: Union[List, None] = []
 
     class Settings:
         name = "reports"
@@ -439,7 +438,6 @@ class OutlierDetectionLog(Document):
     outliers: Union[List, None] = []
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
-    task_refs: Union[List, None] = None
 
     class Settings:
         name = "outliers"
@@ -470,7 +468,6 @@ class PreprocessingLog(Document):
     options: PreprocessingOptions = PreprocessingOptions()
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
-    task_refs: Union[List, None] = []
 
     class Settings:
         name = "preprocessings"
@@ -508,7 +505,6 @@ class TaskLog(Document):
     finished: int = 0
     elapse: float = 0.0
     modified: datetime = Field(default_factory=datetime.now)
-    task_refs: Union[List, None] = []
 
     class Settings:
         name = "tasks"
