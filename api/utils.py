@@ -166,7 +166,7 @@ async def run_scan_tasks(
             await queue.set(
                 tid,
                 TaskQueue(
-                    total=task.get("total"), done=task.get("finished")
+                    total=task.get("total", 0), done=task.get("finished", 0)
                 ).model_dump_json(),
             )
 
@@ -208,7 +208,7 @@ async def run_scan_tasks(
                     *Progress.get_default_columns(),
                 ) as p:
                     task_progress = p.add_task(
-                        "[cyan]Executing task...", total=task.get("total")
+                        "[cyan]Executing task...", total=task.get("total", 0)
                     )
                     batch_no = 0
                     for folder in pending:
@@ -307,7 +307,7 @@ async def run_scan_tasks(
                         status["eta"] = int(eta)
                         t_min, t_sec = divmod(eta, 60)
                         t_hr, t_min = divmod(t_min, 60)
-                        print(f">> Finished: {status['done']} / {task.get('total')}")
+                        print(f">> Finished: {status['done']} / {task.get('total', 1)}")
                         print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
@@ -601,14 +601,14 @@ async def run_scan_tasks(
                         status["eta"] = int(eta)
                         t_min, t_sec = divmod(eta, 60)
                         t_hr, t_min = divmod(t_min, 60)
-                        print(f">> Finished: {counter}/{status["total"]}")
+                        print(f">> Finished: {counter}/{status.get('total', 1)}")
                         print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
                         tasks = not_ready
 
                 task = await log["tasks"].find_one({"tid": tid})
-                if task and (task.get("total") <= task.get("finished")):
+                if task and (task.get("total", 0) <= task.get("finished")):
                     pass
                 else:
                     await asyncio.sleep(3)
