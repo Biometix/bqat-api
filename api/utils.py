@@ -178,7 +178,7 @@ async def run_scan_tasks(
         tid = (await queue.lrange("task_queue", -1, -1))[0]
         if not tid:
             continue
-        await queue.lrem("task_queue", 1, tid)
+
         task = await log["tasks"].find_one({"tid": tid})
         options = task.get("options")
         collection = task.get("collection")
@@ -224,7 +224,9 @@ async def run_scan_tasks(
                     await cache.rpush("task_refs", *[pickle.dumps(batch_task[0])])
 
                     batch = len(get_files(folder))
-                    print(f">> Batch {batch_no}/{len(pending)}, size: {batch}")
+                    print(
+                        f">> Batch {batch_no}/{len(pending)}, size: {batch}/{task.get('total')}"
+                    )
                     try:
                         ready, not_ready = ray.wait(batch_task, timeout=1)
                         while not_ready:
@@ -529,7 +531,7 @@ async def run_scan_tasks(
                             {"tid": task["tid"]},
                             {
                                 "$set": {
-                                    "status": 1,
+                                    "status": 0,
                                 },
                             },
                         )
@@ -571,7 +573,10 @@ async def run_scan_tasks(
                             "$inc": {"samples": len(files)},
                         },
                     )
-                    elapse = task["elapse"] if task["elapse"] else 1
+                    # handle cancelled tasks
+                    if not task:
+                        return
+                    elapse = task["elapse"] if task.get("elapse") else 1
                     status = json.loads(await queue.get(tid))
                     status["done"] += len(files)
                     throughput = status["done"] / elapse

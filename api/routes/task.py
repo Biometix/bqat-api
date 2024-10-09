@@ -430,17 +430,14 @@ async def cancel_task(
     elif not (task_refs := await cache.lrange("task_refs", 0, -1)):
         return {"message": "No tasks is running!"}
     else:
-        if len(task_refs) < 10000:
-            for task in task_refs:
-                try:
-                    ray.cancel(pickle.loads(task))
-                except TypeError as e:
-                    # print(f"Task not found: {str(e)}")
-                    pass
-                except Exception as e:
-                    print(f"Failed to cancel task: {str(e)}")
-        else:
-            ray.shutdown()
+        for task in task_refs:
+            try:
+                ray.cancel(pickle.loads(task))
+            except TypeError as e:
+                # print(f"Task not found: {str(e)}")
+                pass
+            except Exception as e:
+                print(f"Failed to cancel task: {str(e)}")
 
     await cache.ltrim("task_refs", 1, 0)
     await log.delete()
@@ -472,7 +469,14 @@ async def cancel_all_tasks(
         PreprocessingLog.status == Status.running
     ).delete()
 
-    ray.shutdown()
+    for task in await cache.lrange("task_refs", 0, -1):
+        try:
+            ray.cancel(pickle.loads(task))
+        except TypeError as e:
+            # print(f"Task not found: {str(e)}")
+            pass
+        except Exception as e:
+            print(f"Failed to cancel task: {str(e)}")
     await cache.ltrim("task_refs", 1, 0)
 
     return {
@@ -489,16 +493,16 @@ async def get_pending_tasks():
     if log := await TaskLog.find_one(TaskLog.status == Status.running):
         log = dict(log)
         log["type"] = "scan"
-    elif log := await ReportLog.find_one(ReportLog.task_refs == Status.running):
+    elif log := await ReportLog.find_one(ReportLog.status == Status.running):
         log = dict(log)
         log["type"] = "report"
     elif log := await OutlierDetectionLog.find_one(
-        OutlierDetectionLog.task_refs == Status.running
+        OutlierDetectionLog.status == Status.running
     ):
         log = dict(log)
         log["type"] = "outlier"
     elif log := await PreprocessingLog.find_one(
-        PreprocessingLog.task_refs == Status.running
+        PreprocessingLog.status == Status.running
     ):
         log = dict(log)
         log["type"] = "preprocessing"
