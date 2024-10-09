@@ -505,7 +505,7 @@ async def run_scan_tasks(
                 )
                 await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
 
-                step = 100
+                step = Settings().TASK_WAIT_INTERVAL_STEP
                 counter = 0
                 with Progress(
                     SpinnerColumn(),
@@ -515,7 +515,7 @@ async def run_scan_tasks(
                     task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
                     while not p.finished:
                         scan_timer = time.time()
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(Settings().TASK_WAIT_INTERVAL_SLEEP)
                         try:
                             if len(tasks) < step:
                                 ready = tasks
@@ -525,14 +525,13 @@ async def run_scan_tasks(
                                 ready, not_ready = ray.wait(
                                     tasks,
                                     num_returns=step,
-                                    timeout=3,
+                                    timeout=Settings().TASK_WAIT_INTERVAL_TIMEOUT,
                                 )
                                 while not ready and not_ready:
-                                    print(f"{step= }")
                                     ready, not_ready = ray.wait(
                                         tasks,
                                         num_returns=step,
-                                        timeout=3,
+                                        timeout=Settings().TASK_WAIT_INTERVAL_TIMEOUT,
                                     )
                                     step -= int(0.2 * step)
                                 results = ray.get(ready)
