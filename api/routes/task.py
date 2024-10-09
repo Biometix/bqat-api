@@ -430,14 +430,15 @@ async def cancel_task(
     elif not (task_refs := await cache.lrange("task_refs", 0, -1)):
         return {"message": "No tasks is running!"}
     else:
-        for task in task_refs:
-            try:
-                ray.cancel(pickle.loads(task))
-            except TypeError as e:
-                # print(f"Task not found: {str(e)}")
-                pass
-            except Exception as e:
-                print(f"Failed to cancel task: {str(e)}")
+        # for task in task_refs:
+        #     try:
+        #         ray.cancel(pickle.loads(task))
+        #     except TypeError as e:
+        #         # print(f"Task not found: {str(e)}")
+        #         pass
+        #     except Exception as e:
+        #         print(f"Failed to cancel task: {str(e)}")
+        ray.shutdown()
 
     await cache.ltrim("task_refs", 1, 0)
     await log.delete()
@@ -469,14 +470,17 @@ async def cancel_all_tasks(
         PreprocessingLog.status == Status.running
     ).delete()
 
-    for task in await cache.lrange("task_refs", 0, -1):
-        try:
-            ray.cancel(pickle.loads(task))
-        except TypeError as e:
-            # print(f"Task not found: {str(e)}")
-            pass
-        except Exception as e:
-            print(f"Failed to cancel task: {str(e)}")
+    # for task in await cache.lrange("task_refs", 0, -1):
+    #     try:
+    #         ray.cancel(pickle.loads(task))
+    #         print(f"{count=}")
+    #     except TypeError as e:
+    #         # print(f"Task not found: {str(e)}")
+    #         pass
+    #     except Exception as e:
+    #         print(f"Failed to cancel task: {str(e)}")
+    ray.shutdown()
+
     await cache.ltrim("task_refs", 1, 0)
 
     return {
