@@ -18,9 +18,10 @@ import numpy as np
 import pandas as pd
 import ray
 
-# import wsq
+# import wsq # Somehow it needs to be imported with in ray function
 from beanie import PydanticObjectId
-from bson.binary import Binary
+
+# from bson.binary import Binary
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pandas_profiling import ProfileReport
 from PIL import Image, ImageOps
@@ -150,6 +151,7 @@ async def run_scan_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     if task_id:
@@ -164,223 +166,41 @@ async def run_scan_tasks(
             await queue.set(
                 tid,
                 TaskQueue(
-                    total=task.get("total"), done=task.get("finished")
+                    total=task.get("total", 0), done=task.get("finished", 0)
                 ).model_dump_json(),
             )
 
-    while await queue.llen("task_queue") > 0:
-        task_timer = time.time()
-        file_count = 0
-        tasks = []
+    try:
+        while await queue.llen("task_queue") > 0:
+            task_timer = time.time()
+            file_count = 0
+            tasks = []
 
-        tid = (await queue.lrange("task_queue", -1, -1))[0]
-        if not tid:
-            continue
-        await queue.lrem("task_queue", 1, tid)
-        task = await log["tasks"].find_one({"tid": tid})
-        options = task.get("options")
-        collection = task.get("collection")
+            tid = (await queue.lrange("task_queue", -1, -1))[0]
+            if not tid:
+                continue
 
-        if task.get("status") == Status.new:
-            if not await log["datasets"].find_one({"collection": collection}):
-                await CollectionLog(collection=collection, options=options).create()
+            task = await log["tasks"].find_one({"tid": tid})
+            options = task.get("options")
+            collection = task.get("collection")
 
-        # Split folder scan
-        if options.get("engine") == "ofiq" and options.get("type") != "folder":
-            pending = [
-                sample["path"]
-                for sample in await log["samples"]
-                .find({"tid": tid, "status": 0})
-                .to_list(length=None)
-            ]
-            options["type"] = "folder"
+            if task.get("status") == Status.new:
+                if not await log["datasets"].find_one({"collection": collection}):
+                    await CollectionLog(collection=collection, options=options).create()
 
-            task = await log["tasks"].find_one_and_update(
-                {"tid": tid}, {"$set": {"status": 1}}
-            )
+            # Split folder scan
+            if options.get("engine") == "ofiq" and options.get("type") != "folder":
+                pending = [
+                    sample["path"]
+                    for sample in await log["samples"]
+                    .find({"tid": tid, "status": 0})
+                    .to_list(length=None)
+                ]
+                options["type"] = "folder"
 
-            with Progress(
-                SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
-            ) as p:
-                task_progress = p.add_task(
-                    "[cyan]Executing task...", total=task.get("total")
+                task = await log["tasks"].find_one_and_update(
+                    {"tid": tid}, {"$set": {"status": 1}}
                 )
-                batch_no = 0
-                for folder in pending:
-                    batch_start = time.time()
-                    batch_no += 1
-                    batch_task = [scan_task.remote(folder, options)]
-                    await log["tasks"].find_one_and_update(
-                        {"tid": tid},
-                        {
-                            "$set": {
-                                "status": 1,
-                                "task_refs": [Binary(pickle.dumps(batch_task[0]))],
-                            }
-                        },
-                    )
-                    batch = len(get_files(folder))
-                    print(f">> Batch {batch_no}/{len(pending)}, size: {batch}")
-                    try:
-                        ready, not_ready = ray.wait(batch_task, timeout=1)
-                        while not_ready:
-                            await asyncio.sleep(3)
-                            ready, not_ready = ray.wait(not_ready, timeout=0.1)
-                            print(
-                                f">> Processing batch {batch_no}, elapse: {time.time() - batch_start:.2f}/{time.time() - task_timer:.2f}..."
-                            )
-                        outputs = ray.get(batch_task)
-                        await log["tasks"].find_one_and_update(
-                            {"tid": tid},
-                            {
-                                "$set": {
-                                    "status": 2,
-                                    "task_refs": [],
-                                }
-                            },
-                        )
-                    except ray.exceptions.TaskCancelledError:
-                        print(f"Task was cancelled: {tid}")
-                        await log["tasks"].find_one_and_update(
-                            {"tid": task["tid"]},
-                            {
-                                "$set": {
-                                    "task_refs": [],
-                                    "status": 0,
-                                },
-                            },
-                        )
-                        await queue.delete(tid)
-                        return
-                    batch_count = 0
-                    for output in outputs:
-                        result_list = output.get("results", [])
-                        for result in result_list:
-                            file_count += 1
-                            batch_count += 1
-                            await scan[collection].insert_one(result)
-                    await log["samples"].find_one_and_update(
-                        {"tid": tid, "path": folder},
-                        {
-                            "$set": {
-                                "status": 2,
-                                "task_refs": [],
-                                "modified": datetime.now(),
-                            }
-                        },
-                    )
-                    p.update(task_progress, advance=batch_count)
-                    batch_timer = time.time() - batch_start
-                    task = await log["tasks"].find_one_and_update(
-                        {"tid": tid},
-                        {"$inc": {"elapse": batch_timer, "finished": batch_count}},
-                    )
-                    await log["datasets"].find_one_and_update(
-                        {"collection": collection},
-                        {
-                            # "$set": {"modified": datetime.now()},
-                            "$currentDate": {"modified": True},
-                            "$inc": {"samples": batch_count},
-                        },
-                    )
-                    elapse = (
-                        task["elapse"]
-                        if task["elapse"] > 0
-                        else batch_timer
-                        if batch_timer > 0
-                        else 1
-                    )
-                    status = json.loads(await queue.get(tid))
-                    status["done"] += batch_count
-                    throughput = status["done"] / elapse
-                    eta = (status["total"] - status["done"]) / throughput
-                    status["eta"] = int(eta)
-                    t_min, t_sec = divmod(eta, 60)
-                    t_hr, t_min = divmod(t_min, 60)
-                    print(f">> Finished: {status['done']} / {task.get('total')}")
-                    print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
-                    print(f">> Throughput: {throughput:.2f} items/s\n")
-                    await queue.set(tid, json.dumps(status))
-
-                    shutil.rmtree(folder)
-
-                    if p.finished:
-                        break
-
-            await log["tasks"].find_one_and_update(
-                {"tid": tid},
-                {
-                    "$set": {
-                        "status": 2,
-                        "task_refs": [],
-                        "modified": datetime.now(),
-                    }
-                },
-            )
-            await queue.rpop("task_queue")
-            await queue.delete(tid)
-            await log["samples"].delete_many({"tid": tid})
-
-        # Whole folder scan
-        elif options.get("mode") == "speech" or options.get("type") == "folder":
-            input_folder = (await log["samples"].find_one({"tid": tid, "status": 0}))[
-                "path"
-            ]
-            file_total = task.get("total")
-
-            if options.get("mode") == "speech":
-                dir_list = [
-                    str(i) + "/"
-                    for i in Path(input_folder).rglob("*")
-                    if (i.is_dir() and len(list(i.glob("*.[Ww][Aa][Vv]"))) > 0)
-                ]
-                if len(list(Path(input_folder).glob("*.[Ww][Aa][Vv]"))) > 0:
-                    dir_list.append(input_folder)
-
-            elif options.get("type") == "folder":
-                accepted_types = ["jpg", "jpeg", "png", "bmp", "wsq", "jp2"]
-
-                dir_list = [
-                    str(i) + "/"
-                    for i in Path(input_folder).rglob("*")
-                    if i.is_dir()
-                    and any(list(i.glob(f"*.{ext}")) for ext in accepted_types)
-                ]
-
-                if any(list(Path(input_folder).glob(f"*.{ext}")) for ext in accepted_types):
-                    dir_list.append(input_folder)
-
-            else:
-                dir_list = [str(i) for i in Path(input_folder).rglob("*") if i.is_dir()]
-                dir_list.append(input_folder)
-
-            for input_folder in dir_list:
-                subtasks=[]
-                file_total = len(list(Path(input_folder).glob("*.*")))
-                with Progress(
-                    SpinnerColumn(),
-                    MofNCompleteColumn(),
-                    *Progress.get_default_columns(),
-                ) as p:
-                    task_progress = p.add_task("[purple]Sending...", total=file_total)
-                    subtasks.append(
-                        scan_task.remote(
-                            input_folder,
-                            options,
-                        )
-                    )
-                    await log["tasks"].find_one_and_update(
-                        {"tid": tid},
-                        {
-                            "$set": {
-                                "status": 1,
-                                "task_refs": [
-                                    Binary(pickle.dumps(task)) for task in subtasks
-                                ],
-                            }
-                        },
-                    )
-                    p.update(task_progress, completed=file_total)
 
                 with Progress(
                     SpinnerColumn(),
@@ -388,228 +208,455 @@ async def run_scan_tasks(
                     *Progress.get_default_columns(),
                 ) as p:
                     task_progress = p.add_task(
-                        "[purple]Finalising...", total=file_total
+                        "[cyan]Executing task...", total=task.get("total", 0)
                     )
-                    try:
-                        ready, not_ready = ray.wait(subtasks, timeout=3)
-                        while not_ready:
-                            await asyncio.sleep(10)
-                            ready, not_ready = ray.wait(not_ready, timeout=3)
-                            print(f"{datetime.now()}: processing...")
-                        outputs = ray.get(subtasks)
-                    except ray.exceptions.TaskCancelledError:
-                        print(f"Task was cancelled: {tid}")
+                    batch_no = 0
+                    for folder in pending:
+                        batch_start = time.time()
+                        batch_no += 1
+                        batch_task = [scan_task.remote(folder, options)]
+
                         await log["tasks"].find_one_and_update(
-                            {"tid": task["tid"]},
+                            {"tid": tid},
                             {
                                 "$set": {
-                                    "task_refs": [],
-                                    "status": 0,
-                                },
-                            },
-                        )
-                        await queue.delete(tid)
-                        return
-                    for output in outputs:
-                        result_list = output.get("results", [])
-                        for result in result_list:
-                            file_count += 1
-                            await scan[collection].insert_one(result)
-                            p.update(task_progress, advance=1)
-                            if p.finished:
-                                break
-
-                    p.update(task_progress, completed=file_total)
-
-            scan_timer = time.time() - task_timer
-            task = await log["tasks"].find_one_and_update(
-                {"tid": tid},
-                {"$inc": {"elapse": scan_timer, "finished": file_count}},
-            )
-            await log["datasets"].find_one_and_update(
-                {"collection": collection},
-                {
-                    # "$set": {"modified": datetime.now()},
-                    "$currentDate": {"modified": True},
-                    "$inc": {"samples": file_count},
-                },
-            )
-
-            await log["tasks"].find_one_and_update(
-                {"tid": tid},
-                {
-                    "$set": {
-                        "status": 2,
-                        "task_refs": [],
-                        "modified": datetime.now(),
-                    }
-                },
-            )
-            await queue.rpop("task_queue")
-            await queue.delete(tid)
-            await log["samples"].delete_many({"tid": tid})
-
-        # Individual file scan
-        else:
-            pending = [
-                sample["path"]
-                for sample in await log["samples"]
-                .find({"tid": tid, "status": 0})
-                .to_list(length=None)
-            ]
-
-            task = await log["tasks"].find_one_and_update(
-                {"tid": tid}, {"$set": {"status": 1}}
-            )
-            with Progress(
-                SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
-            ) as p:
-                task_progress = p.add_task("[cyan]Sending task...", total=len(pending))
-                for file in pending:
-                    tasks.append(scan_task.remote(file, options))
-                    file_count += 1
-                    p.update(task_progress, advance=1)
-                    if p.finished:
-                        break
-            await log["tasks"].find_one_and_update(
-                {"tid": tid},
-                {
-                    "$set": {
-                        "status": 1,
-                        "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
-                    }
-                },
-            )
-
-            step = 100
-            counter = 0
-            with Progress(
-                SpinnerColumn(), MofNCompleteColumn(), *Progress.get_default_columns()
-            ) as p:
-                task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
-                while not p.finished:
-                    scan_timer = time.time()
-                    await asyncio.sleep(3)
-                    try:
-                        if len(tasks) < step:
-                            ready = tasks
-                            results = ray.get(tasks)
-                            not_ready = []
-                        else:
-                            ready, not_ready = ray.wait(
-                                tasks,
-                                num_returns=step,
-                                timeout=3,
-                            )
-                            while not ready and not_ready:
-                                print(f"{step= }")
-                                ready, not_ready = ray.wait(
-                                    tasks,
-                                    num_returns=step,
-                                    timeout=3,
-                                )
-                                step -= int(0.2 * step)
-                            results = ray.get(ready)
-                            if len(results) < step:
-                                step -= len(results)
-                            else:
-                                step += int(0.2 * step)
-                            if step < 1:
-                                step = 1
-                    except ray.exceptions.TaskCancelledError:
-                        print(f"Task was cancelled: {tid}")
-                        await log["tasks"].find_one_and_update(
-                            {"tid": task["tid"]},
-                            {
-                                "$set": {
-                                    "task_refs": [],
                                     "status": 1,
-                                },
+                                }
                             },
                         )
-                        await queue.delete(tid)
-                        return
-                    if not results:
-                        break
-                    counter += len(ready)
+                        await cache.rpush("task_refs", *[pickle.dumps(batch_task[0])])
 
-                    await scan[collection].insert_many(results)
-                    files = [entry.get("file") for entry in results if "file" in entry]
-
-                    await log["samples"].bulk_write(
-                        [
-                            UpdateOne(
-                                {"tid": tid, "path": file},
+                        batch = len(get_files(folder))
+                        print(
+                            f">> Batch {batch_no}/{len(pending)}, size: {batch}/{task.get('total')}"
+                        )
+                        try:
+                            ready, not_ready = ray.wait(batch_task, timeout=1)
+                            while not_ready:
+                                await asyncio.sleep(3)
+                                ready, not_ready = ray.wait(not_ready, timeout=0.1)
+                                print(
+                                    f">> Processing batch {batch_no}, elapse: {time.time() - batch_start:.2f}/{time.time() - task_timer:.2f}..."
+                                )
+                            outputs = ray.get(batch_task)
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
                                 {
                                     "$set": {
                                         "status": 2,
                                     }
                                 },
                             )
-                            for file in files
-                        ]
-                    )
+                            await cache.ltrim("task_refs", 1, 0)
+                        except (ray.exceptions.TaskCancelledError, ValueError):
+                            print(f"Task was cancelled: {tid}")
+                            await log["tasks"].find_one_and_update(
+                                {"tid": task["tid"]},
+                                {
+                                    "$set": {
+                                        "status": 0,
+                                    },
+                                },
+                            )
+                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.delete(tid)
+                            return
+                        batch_count = 0
+                        for output in outputs:
+                            result_list = output.get("results", [])
+                            for result in result_list:
+                                file_count += 1
+                                batch_count += 1
+                                await scan[collection].insert_one(result)
+                        await log["samples"].find_one_and_update(
+                            {"tid": tid, "path": folder},
+                            {
+                                "$set": {
+                                    "status": 2,
+                                    "modified": datetime.now(),
+                                }
+                            },
+                        )
+                        await cache.ltrim("task_refs", 1, 0)
+                        p.update(task_progress, advance=batch_count)
+                        batch_timer = time.time() - batch_start
+                        task = await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$inc": {
+                                    # "elapse": batch_timer,
+                                    "finished": batch_count,
+                                },
+                                "$set": {
+                                    "elapse": time.time() - task_timer,
+                                },
+                            },
+                        )
+                        await log["datasets"].find_one_and_update(
+                            {"collection": collection},
+                            {
+                                # "$set": {"modified": datetime.now()},
+                                "$currentDate": {"modified": True},
+                                "$inc": {"samples": batch_count},
+                            },
+                        )
+                        elapse = (
+                            task["elapse"]
+                            if task["elapse"] > 0
+                            else batch_timer
+                            if batch_timer > 0
+                            else 1
+                        )
+                        status = json.loads(await queue.get(tid))
+                        status["done"] += batch_count
+                        throughput = status["done"] / elapse
+                        throughput = 1 if not throughput else throughput
+                        eta = (status["total"] - status["done"]) / throughput
+                        status["eta"] = int(eta)
+                        print(f">> Finished: {status['done']} / {task.get('total', 1)}")
+                        print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
+                        print(f">> ETA: {convert_sec_to_hms(int(eta))}")
+                        print(f">> Throughput: {throughput:.2f} items/s\n")
+                        await queue.set(tid, json.dumps(status))
 
-                    scan_timer = time.time() - scan_timer
-                    p.update(task_progress, advance=len(files))
-                    task = await log["tasks"].find_one_and_update(
-                        {"tid": tid},
-                        {"$inc": {"elapse": scan_timer, "finished": len(files)}},
-                    )
-                    await log["datasets"].find_one_and_update(
-                        {"collection": collection},
-                        {
-                            # "$set": {"modified": datetime.now()},
-                            "$currentDate": {"modified": True},
-                            "$inc": {"samples": len(files)},
-                        },
-                    )
-                    elapse = task["elapse"] if task["elapse"] else 1
-                    status = json.loads(await queue.get(tid))
-                    status["done"] += len(files)
-                    throughput = status["done"] / elapse
-                    eta = (status["total"] - status["done"]) / throughput
-                    status["eta"] = int(eta)
-                    t_min, t_sec = divmod(eta, 60)
-                    t_hr, t_min = divmod(t_min, 60)
-                    print(f">> Finished: {counter}")
-                    print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
-                    print(f">> Throughput: {throughput:.2f} items/s\n")
-                    await queue.set(tid, json.dumps(status))
-                    tasks = not_ready
+                        shutil.rmtree(folder)
 
-            task = await log["tasks"].find_one({"tid": tid})
-            if task and (task.get("total") <= task.get("finished")):
-                pass
+                        if p.finished:
+                            break
+
+                await log["tasks"].find_one_and_update(
+                    {"tid": tid},
+                    {
+                        "$set": {
+                            "status": 2,
+                            "modified": datetime.now(),
+                        }
+                    },
+                )
+                await cache.ltrim("task_refs", 1, 0)
+                await queue.rpop("task_queue")
+                await queue.delete(tid)
+                await log["samples"].delete_many({"tid": tid})
+
+            # Whole folder scan
+            elif options.get("mode") == "speech" or options.get("type") == "folder":
+                input_folder = (
+                    await log["samples"].find_one({"tid": tid, "status": 0})
+                )["path"]
+                file_total = task.get("total")
+
+                if options.get("mode") == "speech":
+                    dir_list = [
+                        str(i) + "/"
+                        for i in Path(input_folder).rglob("*")
+                        if (i.is_dir() and len(list(i.glob("*.[Ww][Aa][Vv]"))) > 0)
+                    ]
+                    if len(list(Path(input_folder).glob("*.[Ww][Aa][Vv]"))) > 0:
+                        dir_list.append(input_folder)
+
+                elif options.get("type") == "folder":
+                    accepted_types = ["jpg", "jpeg", "png", "bmp", "wsq", "jp2"]
+
+                    dir_list = [
+                        str(i) + "/"
+                        for i in Path(input_folder).rglob("*")
+                        if i.is_dir()
+                        and any(list(i.glob(f"*.{ext}")) for ext in accepted_types)
+                    ]
+
+                    if any(
+                        list(Path(input_folder).glob(f"*.{ext}"))
+                        for ext in accepted_types
+                    ):
+                        dir_list.append(input_folder)
+
+                else:
+                    dir_list = [
+                        str(i) for i in Path(input_folder).rglob("*") if i.is_dir()
+                    ]
+                    dir_list.append(input_folder)
+
+                for input_folder in dir_list:
+                    subtasks = []
+                    file_total = len(list(Path(input_folder).glob("*.*")))
+                    with Progress(
+                        SpinnerColumn(),
+                        MofNCompleteColumn(),
+                        *Progress.get_default_columns(),
+                    ) as p:
+                        task_progress = p.add_task(
+                            "[purple]Sending...", total=file_total
+                        )
+                        subtasks.append(
+                            scan_task.remote(
+                                input_folder,
+                                options,
+                            )
+                        )
+                        await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$set": {
+                                    "status": 1,
+                                }
+                            },
+                        )
+                        await cache.rpush(
+                            "task_refs",
+                            *[pickle.dumps(task) for task in subtasks],
+                        )
+
+                        p.update(task_progress, completed=file_total)
+
+                    with Progress(
+                        SpinnerColumn(),
+                        MofNCompleteColumn(),
+                        *Progress.get_default_columns(),
+                    ) as p:
+                        task_progress = p.add_task(
+                            "[purple]Finalising...", total=file_total
+                        )
+                        try:
+                            ready, not_ready = ray.wait(subtasks, timeout=3)
+                            while not_ready:
+                                await asyncio.sleep(10)
+                                ready, not_ready = ray.wait(not_ready, timeout=3)
+                                print(f"{datetime.now()}: processing...")
+                            outputs = ray.get(subtasks)
+                        except (ray.exceptions.TaskCancelledError, ValueError):
+                            print(f"Task was cancelled: {tid}")
+                            await log["tasks"].find_one_and_update(
+                                {"tid": task["tid"]},
+                                {
+                                    "$set": {
+                                        "status": 0,
+                                    },
+                                },
+                            )
+                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.delete(tid)
+                            return
+                        for output in outputs:
+                            result_list = output.get("results", [])
+                            for result in result_list:
+                                file_count += 1
+                                await scan[collection].insert_one(result)
+                                p.update(task_progress, advance=1)
+                                if p.finished:
+                                    break
+
+                        p.update(task_progress, completed=file_total)
+
+                scan_timer = time.time() - task_timer
+                task = await log["tasks"].find_one_and_update(
+                    {"tid": tid},
+                    {"$inc": {"elapse": scan_timer, "finished": file_count}},
+                )
+                await log["datasets"].find_one_and_update(
+                    {"collection": collection},
+                    {
+                        # "$set": {"modified": datetime.now()},
+                        "$currentDate": {"modified": True},
+                        "$inc": {"samples": file_count},
+                    },
+                )
+
+                await log["tasks"].find_one_and_update(
+                    {"tid": tid},
+                    {
+                        "$set": {
+                            "status": 2,
+                            "modified": datetime.now(),
+                        }
+                    },
+                )
+                await cache.ltrim("task_refs", 1, 0)
+                await queue.rpop("task_queue")
+                await queue.delete(tid)
+                await log["samples"].delete_many({"tid": tid})
+
+            # Individual file scan
             else:
-                await asyncio.sleep(3)
+                pending = [
+                    sample["path"]
+                    for sample in await log["samples"]
+                    .find({"tid": tid, "status": 0})
+                    .to_list(length=None)
+                ]
 
-            await log["tasks"].find_one_and_update(
-                {"tid": tid},
-                {
-                    "$set": {
-                        "status": 2,
-                        "task_refs": [],
-                        "modified": datetime.now(),
-                    }
-                },
-            )
-            await queue.rpop("task_queue")
-            await queue.delete(tid)
-            await log["samples"].delete_many({"tid": tid})
-        if options.get("temp"):
-            shutil.rmtree(task.get("input"))
+                task = await log["tasks"].find_one_and_update(
+                    {"tid": tid}, {"$set": {"status": 1}}
+                )
+                with Progress(
+                    SpinnerColumn(),
+                    MofNCompleteColumn(),
+                    *Progress.get_default_columns(),
+                ) as p:
+                    task_progress = p.add_task(
+                        "[cyan]Sending task...", total=len(pending)
+                    )
+                    for file in pending:
+                        tasks.append(scan_task.remote(file, options))
+                        file_count += 1
+                        p.update(task_progress, advance=1)
+                        if p.finished:
+                            break
 
-        task_timer = time.time() - task_timer
-        t_min, t_sec = divmod(task_timer, 60)
-        t_hr, t_min = divmod(t_min, 60)
-        print(f">> File count: {file_count}")
-        print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
-        print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
-        print(f">> Collection: {collection}")
+                await log["tasks"].find_one_and_update(
+                    {"tid": tid},
+                    {
+                        "$set": {
+                            "status": 1,
+                        }
+                    },
+                )
+                await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
 
-    if os.path.exists(Settings().TEMP):
-        shutil.rmtree(Settings().TEMP)
+                step = Settings().TASK_WAIT_INTERVAL_STEP
+                counter = 0
+                gear = 1
+                with Progress(
+                    SpinnerColumn(),
+                    MofNCompleteColumn(),
+                    *Progress.get_default_columns(),
+                ) as p:
+                    task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
+                    while not p.finished:
+                        scan_timer = time.time()
+                        await asyncio.sleep(Settings().TASK_WAIT_INTERVAL_SLEEP)
+                        try:
+                            if len(tasks) < step:
+                                ready = tasks
+                                results = ray.get(tasks)
+                                not_ready = []
+                            else:
+                                ready, not_ready = ray.wait(
+                                    tasks,
+                                    num_returns=step,
+                                    timeout=Settings().TASK_WAIT_INTERVAL_TIMEOUT,
+                                )
+                                while not ready and not_ready:
+                                    ready, not_ready = ray.wait(
+                                        tasks,
+                                        num_returns=step,
+                                        timeout=Settings().TASK_WAIT_INTERVAL_TIMEOUT,
+                                    )
+                                    step -= int(0.2 * step)
+                                results = ray.get(ready)
+                                if len(results) < step:
+                                    step -= len(results)
+                                    gear = 1
+                                else:
+                                    step += int(0.2 * gear * step)
+                                    gear += 1
+                                if step < 1:
+                                    gear = 1
+                                    step = 1
+                        except (ray.exceptions.TaskCancelledError, ValueError):
+                            print(f"Task was cancelled: {tid}")
+                            await log["tasks"].find_one_and_update(
+                                {"tid": task["tid"]},
+                                {
+                                    "$set": {
+                                        "status": 0,
+                                    },
+                                },
+                            )
+                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.delete(tid)
+                            return
+                        if not results:
+                            break
+                        counter += len(ready)
+
+                        await scan[collection].insert_many(results)
+                        files = [
+                            entry.get("file") for entry in results if "file" in entry
+                        ]
+
+                        await log["samples"].bulk_write(
+                            [
+                                UpdateOne(
+                                    {"tid": tid, "path": file},
+                                    {
+                                        "$set": {
+                                            "status": 2,
+                                        }
+                                    },
+                                )
+                                for file in files
+                            ]
+                        )
+
+                        scan_timer = time.time() - scan_timer
+                        p.update(task_progress, advance=len(files))
+                        task = await log["tasks"].find_one_and_update(
+                            {"tid": tid},
+                            {
+                                "$inc": {
+                                    # "elapse": scan_timer,
+                                    "finished": len(files),
+                                },
+                                "$set": {
+                                    "elapse": time.time() - task_timer,
+                                },
+                            },
+                        )
+                        await log["datasets"].find_one_and_update(
+                            {"collection": collection},
+                            {
+                                # "$set": {"modified": datetime.now()},
+                                "$currentDate": {"modified": True},
+                                "$inc": {"samples": len(files)},
+                            },
+                        )
+
+                        elapse = task["elapse"] if task.get("elapse") else 1
+                        status = json.loads(await queue.get(tid))
+                        status["done"] += len(files)
+                        throughput = status["done"] / elapse
+                        eta = (status["total"] - status["done"]) / throughput
+                        status["eta"] = int(eta)
+                        print(f">> Finished: {counter}/{status.get('total', 1)}")
+                        print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
+                        print(f">> ETA: {convert_sec_to_hms(int(eta))}")
+                        print(f">> Throughput: {throughput:.2f} items/s\n")
+                        await queue.set(tid, json.dumps(status))
+                        tasks = not_ready
+
+                task = await log["tasks"].find_one({"tid": tid})
+                if task and (task.get("total", 0) <= task.get("finished")):
+                    pass
+                else:
+                    await asyncio.sleep(3)
+
+                await log["tasks"].find_one_and_update(
+                    {"tid": tid},
+                    {
+                        "$set": {
+                            "status": 2,
+                            "modified": datetime.now(),
+                        }
+                    },
+                )
+                await cache.ltrim("task_refs", 1, 0)
+                await queue.rpop("task_queue")
+                await queue.delete(tid)
+                await log["samples"].delete_many({"tid": tid})
+            if options.get("temp"):
+                shutil.rmtree(task.get("input"))
+
+            task_timer = time.time() - task_timer
+            print(f">> File count: {file_count}")
+            print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
+            print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
+            print(f">> Output: {collection}")
+    except Exception as e:
+        print(f"Task ended: {e}")
+
+    temp_folder = Path(Settings().TEMP) / f"{tid}"
+    if temp_folder.exists():
+        shutil.rmtree(temp_folder)
     print(">>> Finished <<<\n")
 
 
@@ -617,6 +664,7 @@ async def run_report_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     tasks = []
@@ -648,6 +696,18 @@ async def run_report_tasks(
                 doc.pop("_id")
                 data.append(doc)
 
+        if not data:
+            print(f">> No data found, skip generating report: {dataset_id}")
+            await log["reports"].find_one_and_update(
+                {"tid": task["tid"]},
+                {
+                    "$set": {
+                        "status": 2,
+                    },
+                },
+            )
+            continue
+
         print(f">> Generate report: {dataset_id}")
 
         options = task.get("options")
@@ -667,10 +727,10 @@ async def run_report_tasks(
             {
                 "$set": {
                     "status": 1,
-                    "task_refs": [Binary(pickle.dumps(task)) for task in report],
                 },
             },
         )
+        await cache.rpush("task_refs", *[pickle.dumps(task) for task in report])
         try:
             ready, not_ready = ray.wait(report, timeout=3)
             while not_ready:
@@ -683,11 +743,11 @@ async def run_report_tasks(
                 {"tid": task["tid"]},
                 {
                     "$set": {
-                        "task_refs": [],
                         "status": 0,
                     },
                 },
             )
+            await cache.ltrim("task_refs", 1, 0)
             return
         fs = AsyncIOMotorGridFSBucket(log)
 
@@ -708,17 +768,15 @@ async def run_report_tasks(
                     "file_id": str(file_id),
                     "filename": filename,
                     "modified": datetime.now(),
-                    "task_refs": [],
                     "status": 2,
                 }
             },
         )
+        await cache.ltrim("task_refs", 1, 0)
         await queue.rpop("task_queue")
 
         task_timer = time.time() - task_timer
-        t_min, t_sec = divmod(task_timer, 60)
-        t_hr, t_min = divmod(t_min, 60)
-        print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+        print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
     print(">>> Finished <<<")
 
 
@@ -726,6 +784,7 @@ async def run_outlier_detection_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     if task_id:
@@ -766,10 +825,10 @@ async def run_outlier_detection_tasks(
             {
                 "$set": {
                     "status": 1,
-                    "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
                 },
             },
         )
+        await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
         try:
             ready, not_ready = ray.wait(tasks, timeout=3)
             while not_ready:
@@ -782,7 +841,6 @@ async def run_outlier_detection_tasks(
                 {"tid": tid},
                 {
                     "$set": {
-                        "task_refs": [],
                         "status": 0,
                     },
                 },
@@ -800,7 +858,6 @@ async def run_outlier_detection_tasks(
                 "$set": {
                     "outliers": outliers.to_dict("records"),
                     "modified": datetime.now(),
-                    "task_refs": [],
                     "status": 2,
                 },
             },
@@ -808,15 +865,14 @@ async def run_outlier_detection_tasks(
         await queue.rpop("task_queue")
 
         task_timer = time.time() - task_timer
-        t_min, t_sec = divmod(task_timer, 60)
-        t_hr, t_min = divmod(t_min, 60)
-        print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+        print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
     print(">>> Finished <<<")
 
 
 async def run_preprocessing_tasks(
     log: AsyncIOMotorDatabase,
     queue: Redis,
+    cache: Redis,
     task_id: str | None = None,
 ) -> None:
     if task_id:
@@ -894,10 +950,10 @@ async def run_preprocessing_tasks(
                 {
                     "$set": {
                         "status": 1,
-                        "task_refs": [Binary(pickle.dumps(task)) for task in tasks],
                     },
                 },
             )
+            await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
 
         eta_step = 100  # ETA estimation interval
         counter = 0
@@ -922,11 +978,11 @@ async def run_preprocessing_tasks(
                         {"tid": tid},
                         {
                             "$set": {
-                                "task_refs": [],
                                 "status": 0,
                             },
                         },
                     )
+                    await cache.ltrim("task_refs", 1, 0)
                     return
                 p.update(task_progress, advance=len(ready))
                 counter += len(ready)
@@ -938,10 +994,9 @@ async def run_preprocessing_tasks(
                 throughput = status["done"] / elapse
                 eta = (status["total"] - status["done"]) / throughput
                 status["eta"] = int(eta)
-                t_min, t_sec = divmod(eta, 60)
-                t_hr, t_min = divmod(t_min, 60)
-                print(f">> Finished: {counter}")
-                print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                print(f">> Finished: {counter}/{status['total']}")
+                print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
+                print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                 print(f">> Throughput: {throughput:.2f} items/s\n")
                 await queue.set(tid, json.dumps(status))
 
@@ -949,10 +1004,6 @@ async def run_preprocessing_tasks(
         print("Finished!")
 
         task_timer = time.time() - task_timer
-        sc = task_timer
-        mn, sc = divmod(sc, 60)
-        hr, mn = divmod(mn, 60)
-        sc, mn, hr = int(sc), int(mn), int(hr)
 
         await log["preprocessings"].find_one_and_update(
             {"tid": tid},
@@ -960,17 +1011,17 @@ async def run_preprocessing_tasks(
                 "$set": {
                     "target": output_dir,
                     "modified": datetime.now(),
-                    "task_refs": [],
                     "status": 2,
                 },
             },
         )
+        await cache.ltrim("task_refs", 1, 0)
         await queue.rpop("task_queue")
         await queue.delete(tid)
 
         print(f">> File count: {file_count}")
         print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
-        print(f">> Process time: {int(hr)}h{int(mn)}m{int(sc)}s")
+        print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
         print(f">> Output: {output_dir}")
     print(">>> Finished <<<")
 
@@ -1281,3 +1332,9 @@ def split_input_folder(
             for file in files[start:end]
         ]
     return subfolders
+
+
+def convert_sec_to_hms(seconds: int) -> str:
+    t_min, t_sec = divmod(seconds, 60)
+    t_hr, t_min = divmod(t_min, 60)
+    return f"{int(t_hr)}h{int(t_min)}m{int(t_sec)}s"

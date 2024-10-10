@@ -51,13 +51,17 @@ class ServerSettings(BaseSettings):
 
 class DatabaseSettings(BaseSettings):
     MGO_URL: str
-    SCAN_DB: str
-    LOG_DB: str
+    SCAN_DB: str = "scan"
+    LOG_DB: str = "log"
     RDS_URL: str
-    QUEUE_DB: str
+    QUEUE_DB: int = 10
+    CACHE_DB: int = 11
     TEMP: str = "/tmp/bqat/"
 
 
 class Settings(CommonSettings, ServerSettings, DatabaseSettings):
     DATA: str = "data/"
-    CPU_RESERVE_PER_TASK: float = 1.1
+    CPU_RESERVE_PER_TASK: float = 1.2
+    TASK_WAIT_INTERVAL_SLEEP: int = 7  # Sleep time between each task status check
+    TASK_WAIT_INTERVAL_TIMEOUT: int = 3  # Timeout for each task status check
+    TASK_WAIT_INTERVAL_STEP: int = 30  # Outputs to wait for each task status check

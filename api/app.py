@@ -54,6 +54,12 @@ async def lifespan(app: FastAPI):
         )
         if await app.queue.info():
             print(f"Connect to Redis (queue): {settings.QUEUE_DB}")
+
+        app.cache = aioredis.from_url(
+            url=settings.RDS_URL, db=settings.CACHE_DB, decode_responses=False
+        )
+        if await app.cache.info():
+            print(f"Connect to Redis (cache): {settings.CACHE_DB}")
     except Exception as e:
         print(f"Failed to connect Redis: {str(e)}")
 
