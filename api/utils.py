@@ -282,7 +282,15 @@ async def run_scan_tasks(
                         batch_timer = time.time() - batch_start
                         task = await log["tasks"].find_one_and_update(
                             {"tid": tid},
-                            {"$inc": {"elapse": batch_timer, "finished": batch_count}},
+                            {
+                                "$inc": {
+                                    # "elapse": batch_timer,
+                                    "finished": batch_count,
+                                },
+                                "$set": {
+                                    "elapse": time.time() - task_timer,
+                                },
+                            },
                         )
                         await log["datasets"].find_one_and_update(
                             {"collection": collection},
@@ -305,10 +313,9 @@ async def run_scan_tasks(
                         throughput = 1 if not throughput else throughput
                         eta = (status["total"] - status["done"]) / throughput
                         status["eta"] = int(eta)
-                        t_min, t_sec = divmod(eta, 60)
-                        t_hr, t_min = divmod(t_min, 60)
                         print(f">> Finished: {status['done']} / {task.get('total', 1)}")
-                        print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                        print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
+                        print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
 
@@ -507,6 +514,7 @@ async def run_scan_tasks(
 
                 step = Settings().TASK_WAIT_INTERVAL_STEP
                 counter = 0
+                gear = 1
                 with Progress(
                     SpinnerColumn(),
                     MofNCompleteColumn(),
@@ -537,9 +545,12 @@ async def run_scan_tasks(
                                 results = ray.get(ready)
                                 if len(results) < step:
                                     step -= len(results)
+                                    gear = 1
                                 else:
-                                    step += int(0.2 * step)
+                                    step += int(0.2 * gear * step)
+                                    gear += 1
                                 if step < 1:
+                                    gear = 1
                                     step = 1
                         except (ray.exceptions.TaskCancelledError, ValueError):
                             print(f"Task was cancelled: {tid}")
@@ -581,7 +592,15 @@ async def run_scan_tasks(
                         p.update(task_progress, advance=len(files))
                         task = await log["tasks"].find_one_and_update(
                             {"tid": tid},
-                            {"$inc": {"elapse": scan_timer, "finished": len(files)}},
+                            {
+                                "$inc": {
+                                    # "elapse": scan_timer,
+                                    "finished": len(files),
+                                },
+                                "$set": {
+                                    "elapse": time.time() - task_timer,
+                                },
+                            },
                         )
                         await log["datasets"].find_one_and_update(
                             {"collection": collection},
@@ -598,10 +617,9 @@ async def run_scan_tasks(
                         throughput = status["done"] / elapse
                         eta = (status["total"] - status["done"]) / throughput
                         status["eta"] = int(eta)
-                        t_min, t_sec = divmod(eta, 60)
-                        t_hr, t_min = divmod(t_min, 60)
                         print(f">> Finished: {counter}/{status.get('total', 1)}")
-                        print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                        print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
+                        print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
                         tasks = not_ready
@@ -629,12 +647,10 @@ async def run_scan_tasks(
                 shutil.rmtree(task.get("input"))
 
             task_timer = time.time() - task_timer
-            t_min, t_sec = divmod(task_timer, 60)
-            t_hr, t_min = divmod(t_min, 60)
             print(f">> File count: {file_count}")
             print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
-            print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
-            print(f">> Collection: {collection}")
+            print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
+            print(f">> Output: {collection}")
     except Exception as e:
         print(f"Task ended: {e}")
 
@@ -679,6 +695,18 @@ async def run_report_tasks(
             for doc in await scan[dataset_id].find().to_list(length=None):
                 doc.pop("_id")
                 data.append(doc)
+
+        if not data:
+            print(f">> No data found, skip generating report: {dataset_id}")
+            await log["reports"].find_one_and_update(
+                {"tid": task["tid"]},
+                {
+                    "$set": {
+                        "status": 2,
+                    },
+                },
+            )
+            continue
 
         print(f">> Generate report: {dataset_id}")
 
@@ -748,9 +776,7 @@ async def run_report_tasks(
         await queue.rpop("task_queue")
 
         task_timer = time.time() - task_timer
-        t_min, t_sec = divmod(task_timer, 60)
-        t_hr, t_min = divmod(t_min, 60)
-        print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+        print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
     print(">>> Finished <<<")
 
 
@@ -839,9 +865,7 @@ async def run_outlier_detection_tasks(
         await queue.rpop("task_queue")
 
         task_timer = time.time() - task_timer
-        t_min, t_sec = divmod(task_timer, 60)
-        t_hr, t_min = divmod(t_min, 60)
-        print(f">> Process time: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+        print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
     print(">>> Finished <<<")
 
 
@@ -970,10 +994,9 @@ async def run_preprocessing_tasks(
                 throughput = status["done"] / elapse
                 eta = (status["total"] - status["done"]) / throughput
                 status["eta"] = int(eta)
-                t_min, t_sec = divmod(eta, 60)
-                t_hr, t_min = divmod(t_min, 60)
-                print(f">> Finished: {counter}")
-                print(f">> ETA: {int(t_hr)}h{int(t_min)}m{int(t_sec)}s")
+                print(f">> Finished: {counter}/{status['total']}")
+                print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
+                print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                 print(f">> Throughput: {throughput:.2f} items/s\n")
                 await queue.set(tid, json.dumps(status))
 
@@ -981,10 +1004,6 @@ async def run_preprocessing_tasks(
         print("Finished!")
 
         task_timer = time.time() - task_timer
-        sc = task_timer
-        mn, sc = divmod(sc, 60)
-        hr, mn = divmod(mn, 60)
-        sc, mn, hr = int(sc), int(mn), int(hr)
 
         await log["preprocessings"].find_one_and_update(
             {"tid": tid},
@@ -1002,7 +1021,7 @@ async def run_preprocessing_tasks(
 
         print(f">> File count: {file_count}")
         print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
-        print(f">> Process time: {int(hr)}h{int(mn)}m{int(sc)}s")
+        print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
         print(f">> Output: {output_dir}")
     print(">>> Finished <<<")
 
@@ -1313,3 +1332,9 @@ def split_input_folder(
             for file in files[start:end]
         ]
     return subfolders
+
+
+def convert_sec_to_hms(seconds: int) -> str:
+    t_min, t_sec = divmod(seconds, 60)
+    t_hr, t_min = divmod(t_min, 60)
+    return f"{int(t_hr)}h{int(t_min)}m{int(t_sec)}s"

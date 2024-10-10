@@ -765,6 +765,12 @@ async def generate_report(
     trigger: bool = True,
     options: ReportOptions = Body(...),
 ):
+    if not await request.app.scan[dataset_id].find().to_list(length=None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No output data found for dataset [{dataset_id}].",
+        )
+
     found = await ReportLog.find_one(ReportLog.collection == dataset_id)
     metadata = (await TaskLog.find_one({"collection": dataset_id})).options
     metadata.update(
@@ -1208,7 +1214,11 @@ async def generate_remote_report(
 
     file_path = f"{Settings().TEMP}{uuid.uuid4()}_{file.filename}"
     with open(file_path, "wb") as out:
-        data = await file.read()
+        if not (data := await file.read()):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"No output data in [{file.filename}].",
+            )
         out.write(data)
 
     task = await ReportLog(
