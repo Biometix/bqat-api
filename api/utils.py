@@ -211,8 +211,8 @@ async def run_scan_tasks(
                         "[cyan]Executing task...", total=task.get("total", 0)
                     )
                     batch_no = 0
+                    batch_start = time.time()
                     for folder in pending:
-                        batch_start = time.time()
                         batch_no += 1
                         batch_task = [scan_task.remote(folder, options)]
 
@@ -284,12 +284,12 @@ async def run_scan_tasks(
                             {"tid": tid},
                             {
                                 "$inc": {
-                                    # "elapse": batch_timer,
+                                    "elapse": int(batch_timer),
                                     "finished": batch_count,
                                 },
-                                "$set": {
-                                    "elapse": time.time() - task_timer,
-                                },
+                                # "$set": {
+                                #     "elapse": time.time() - task_timer,
+                                # },
                             },
                         )
                         await log["datasets"].find_one_and_update(
@@ -313,7 +313,7 @@ async def run_scan_tasks(
                         throughput = 1 if not throughput else throughput
                         eta = (status["total"] - status["done"]) / throughput
                         status["eta"] = int(eta)
-                        print(f">> Finished: {status['done']} / {task.get('total', 1)}")
+                        print(f">> Finished: {status['done']}/{task.get('total', 1)}")
                         print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
                         print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
@@ -323,6 +323,7 @@ async def run_scan_tasks(
 
                         if p.finished:
                             break
+                        batch_start = time.time()
 
                 await log["tasks"].find_one_and_update(
                     {"tid": tid},
@@ -521,8 +522,8 @@ async def run_scan_tasks(
                     *Progress.get_default_columns(),
                 ) as p:
                     task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
+                    scan_timer = time.time()
                     while not p.finished:
-                        scan_timer = time.time()
                         await asyncio.sleep(Settings().TASK_WAIT_INTERVAL_SLEEP)
                         try:
                             if len(tasks) < step:
@@ -544,14 +545,14 @@ async def run_scan_tasks(
                                     step -= int(0.2 * step)
                                 results = ray.get(ready)
                                 if len(results) < step:
-                                    step -= len(results)
+                                    step = len(results)
                                     gear = 1
                                 else:
-                                    step += int(0.2 * gear * step)
+                                    step += int(0.5 * gear * step)
                                     gear += 1
                                 if step < 1:
-                                    gear = 1
                                     step = 1
+                                    gear = 1
                         except (ray.exceptions.TaskCancelledError, ValueError):
                             print(f"Task was cancelled: {tid}")
                             await log["tasks"].find_one_and_update(
@@ -594,12 +595,12 @@ async def run_scan_tasks(
                             {"tid": tid},
                             {
                                 "$inc": {
-                                    # "elapse": scan_timer,
+                                    "elapse": int(scan_timer),
                                     "finished": len(files),
                                 },
-                                "$set": {
-                                    "elapse": time.time() - task_timer,
-                                },
+                                # "$set": {
+                                #     "elapse": time.time() - task_timer,
+                                # },
                             },
                         )
                         await log["datasets"].find_one_and_update(
@@ -617,12 +618,13 @@ async def run_scan_tasks(
                         throughput = status["done"] / elapse
                         eta = (status["total"] - status["done"]) / throughput
                         status["eta"] = int(eta)
-                        print(f">> Finished: {counter}/{status.get('total', 1)}")
+                        print(f">> Finished: {status["done"]}/{status.get('total', 1)}")
                         print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
                         print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
                         tasks = not_ready
+                        scan_timer = time.time()
 
                 task = await log["tasks"].find_one({"tid": tid})
                 if task and (task.get("total", 0) <= task.get("finished")):
@@ -657,6 +659,7 @@ async def run_scan_tasks(
     temp_folder = Path(Settings().TEMP) / f"{tid}"
     if temp_folder.exists():
         shutil.rmtree(temp_folder)
+        print("Temporary folder removed.")
     print(">>> Finished <<<\n")
 
 

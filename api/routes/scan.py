@@ -1056,9 +1056,14 @@ async def get_task_status(request: Request):
         )
 
 
-@router.post("/pause", response_description="Task queue paused",description="Pauses and clears all tasks from the task queue."
+@router.post(
+    "/pause",
+    response_description="Task queue paused",
+    description="Pauses and clears all tasks from the task queue.",
 )
 async def pause_queue(request: Request):
+    ray.shutdown()
+
     queue = request.app.queue
     cache = request.app.cache
 
@@ -1067,44 +1072,59 @@ async def pause_queue(request: Request):
         await queue.delete(tid)
     await queue.delete("task_queue")
 
-    cancelled = 0
-    for task in await cache.lrange("task_refs", 0, -1):
-        try:
-            ray.cancel(pickle.loads(task))
-            cancelled += 1
-        except TypeError as e:
-            # print(f"Task not found: {str(e)}")
-            pass
-        except Exception as e:
-            print(f"Failed to cancel ray task: {str(e)}")
+    # cancelled = 0
+    # for task in await cache.lrange("task_refs", 0, -1):
+    #     try:
+    #         ray.cancel(pickle.loads(task))
+    #         cancelled += 1
+    #     except TypeError as e:
+    #         # print(f"Task not found: {str(e)}")
+    #         pass
+    #     except Exception as e:
+    #         print(f"Failed to cancel ray task: {str(e)}")
+    await cache.ltrim("task_refs", 1, 0)
 
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
-        content={"message": f"Successful, task queue paused: {cancelled}"},
+        content={"message": "Successful, task queue paused."},
     )
 
 
-# @router.post("/pause/{task_id}", response_description="Task paused",description="Pauses a specific task identified by its task ID from the task queue."
-# )
-# async def pause_task(
-#     task_id: str,
-#     request: Request,
-# ):
-#     queue = request.app.queue
-#     task_list = []
-#     while await queue.llen("task_queue") > 0:
-#         tid = await queue.rpop("task_queue")
-#         if tid == task_id:
-#             await queue.delete(tid)
-#         else:
-#             task_list.append(tid)
+@router.post(
+    "/pause/{task_id}",
+    response_description="Task paused",
+    description="Pauses a specific task identified by its task ID from the task queue.",
+)
+async def pause_task(
+    task_id: str,
+    request: Request,
+):
+    queue = request.app.queue
+    cache = request.app.cache
 
-#     [await queue.lpush("task_queue", tid) for tid in task_list]
+    ray.shutdown()
+    await cache.ltrim("task_refs", 1, 0)
 
-#     return JSONResponse(
-#         status_code=status.HTTP_202_ACCEPTED,
-#         content={"message": f"Successful, task [{task_id}] paused."},
-#     )
+    task_list = []
+    while await queue.llen("task_queue") > 0:
+        tid = await queue.rpop("task_queue")
+        if tid == task_id:
+            await queue.delete(tid)
+        else:
+            task_list.append(tid)
+
+    [await queue.lpush("task_queue", tid) for tid in task_list]
+
+    if not (log := await TaskLog.find_one(TaskLog.tid == task_id)):
+        raise HTTPException(status_code=404, detail="Task not found!")
+
+    log.status = Status.new
+    await log.save()
+
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"message": f"Successful, task [{task_id}] paused."},
+    )
 
 
 @router.post("/resume", response_description="Task queue resumed",description="Resumes processing tasks in the task queue if there are pending tasks."
