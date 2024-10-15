@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -654,7 +655,7 @@ async def run_scan_tasks(
             print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
             print(f">> Output: {collection}")
     except Exception as e:
-        print(f"Task ended: {e}")
+        print(f"> Task ended:\n---\n{traceback.print_exception(e)}\n---")
 
     temp_folder = Path(Settings().TEMP) / f"{tid}"
     if temp_folder.exists():
