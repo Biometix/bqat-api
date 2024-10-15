@@ -1,18 +1,19 @@
 import base64
+import shutil
 import tempfile
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 from zipfile import ZipFile
 
-from fastapi import APIRouter, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Body, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from PIL import Image as PILImage
 
 from api.config import Settings
 from api.config.models import ImageRequest
-from api.utils import extend
+from api.utils import ensure_base64_padding, extend
 
 router = APIRouter()
 
@@ -135,15 +136,6 @@ async def upload_dataset(file: UploadFile):
     return {"message": f"Dataset uploaded to: {target_folder}"}
 
 
-def ensure_base64_padding(base64_bytes):
-    """Ensure the Base64 byte string has proper padding."""
-    if isinstance(base64_bytes, str):
-        base64_bytes = base64_bytes.encode('utf-8')
-    missing_padding = len(base64_bytes) % 4
-    if missing_padding:
-        base64_bytes += b'=' * (4 - missing_padding)  # Use bytes for padding
-    return base64_bytes
-
 @router.post(
     "/convert",
     description="Get converted image files",
@@ -189,3 +181,24 @@ async def favicon() -> FileResponse:
         return FileResponse("api/favicon.png")
     else:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+
+@router.delete(
+    "/dataset",
+    response_description="Dataset deleted.",
+    description="Delete a dataset from the server.",
+)
+async def delete_dataset(
+    dataset: Path = Body(...),
+):
+    try:
+        upload_folder = Path(Settings().DATA) / "uploaded"
+        if not dataset.is_relative_to(upload_folder):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid dataset path.",
+            )
+        shutil.rmtree(dataset)
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return {"message": "Dataset deleted"}

@@ -1342,3 +1342,13 @@ def convert_sec_to_hms(seconds: int) -> str:
     t_min, t_sec = divmod(seconds, 60)
     t_hr, t_min = divmod(t_min, 60)
     return f"{int(t_hr)}h{int(t_min)}m{int(t_sec)}s"
+
+
+def ensure_base64_padding(base64_bytes):
+    """Ensure the Base64 byte string has proper padding."""
+    if isinstance(base64_bytes, str):
+        base64_bytes = base64_bytes.encode("utf-8")
+    missing_padding = len(base64_bytes) % 4
+    if missing_padding:
+        base64_bytes += b"=" * (4 - missing_padding)  # Use bytes for padding
+    return base64_bytes
