@@ -64,4 +64,4 @@ class Settings(CommonSettings, ServerSettings, DatabaseSettings):
     CPU_RESERVE_PER_TASK: float = 1.2
     TASK_WAIT_INTERVAL_SLEEP: int = 7  # Sleep time between each task status check
     TASK_WAIT_INTERVAL_TIMEOUT: int = 3  # Timeout for each task status check
-    TASK_WAIT_INTERVAL_STEP: int = 100  # Outputs to wait for each task status check
+    TASK_WAIT_INTERVAL_STEP: int = 30  # Outputs to wait for each task status check

@@ -659,7 +659,7 @@ async def run_scan_tasks(
     temp_folder = Path(Settings().TEMP) / f"{tid}"
     if temp_folder.exists():
         shutil.rmtree(temp_folder)
-        print("Temporary folder removed.")
+        # print("> Temporary folder removed.")
     print(">>> Finished <<<\n")
 
 

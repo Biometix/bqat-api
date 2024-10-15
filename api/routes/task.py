@@ -430,8 +430,6 @@ async def cancel_task(
 
     if not log:
         raise HTTPException(status_code=404, detail="Task not found!")
-    elif not (task_refs := await cache.lrange("task_refs", 0, -1)):
-        return {"message": "No tasks is running!"}
     else:
         # for task in task_refs:
         #     try:
