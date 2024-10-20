@@ -528,11 +528,18 @@ async def delete_log(dataset_id: str, request: Request):
     response_description="All image profiles for this dataset retrieved",
     description="Retrieves all image profiles associated with a specific dataset."
 )
-async def retrieve_all(dataset_id: str, request: Request):
-    profiles = (
-        await request.app.scan[dataset_id].find({}, {"_id": 0}).to_list(length=None)
-    )
-    return profiles
+async def retrieve_all(
+    dataset_id: str,
+    request: Request,
+    skip: int = 0,
+    limit: int = 0,
+):
+    profiles = request.app.scan[dataset_id].find({}, {"_id": 0})
+    if skip:
+        profiles = profiles.skip(skip)
+    if limit:
+        profiles = profiles.limit(limit)
+    return await profiles.to_list(length=None)
 
 
 @router.delete(
