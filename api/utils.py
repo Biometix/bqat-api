@@ -320,7 +320,7 @@ async def run_scan_tasks(
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
 
-                        shutil.rmtree(folder)
+                        # shutil.rmtree(folder)
 
                         if p.finished:
                             break
@@ -646,21 +646,25 @@ async def run_scan_tasks(
                 await queue.rpop("task_queue")
                 await queue.delete(tid)
                 await log["samples"].delete_many({"tid": tid})
-            if options.get("temp"):
-                shutil.rmtree(task.get("input"))
 
             task_timer = time.time() - task_timer
             print(f">> File count: {file_count}")
             print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
             print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
             print(f">> Output: {collection}")
-    except Exception as e:
-        print(f"> Task ended:\n---\n{traceback.print_exception(e)}\n---")
 
-    temp_folder = Path(Settings().TEMP) / f"{tid}"
-    if temp_folder.exists():
-        shutil.rmtree(temp_folder)
-        # print("> Temporary folder removed.")
+            # Clean up temporary files
+            if options.get("temp"):
+                temp_folder = Path(task.get("input"))
+            else:
+                temp_folder = Path(Settings().TEMP) / f"{tid}"
+            if temp_folder.exists():
+                shutil.rmtree(temp_folder)
+                print("> Temporary folder removed.")
+    except Exception as e:
+        traceback.print_exception(e)
+        print(f"> Task ended:\n---\n{str(e)}\n---")
+
     print(">>> Finished <<<\n")
 
 
@@ -816,9 +820,10 @@ async def run_outlier_detection_tasks(
         for doc in (
             await scan[dataset_id].find().to_list(length=None)
         ):  # TODO instead of reconstruct a dict list, make the query with required attributes
-            sample = {k: float(doc.get(k, 0)) for k in options.get("columns")}
+            sample = {k: float(doc.get(k, 0)) for k in options.get("columns", [])}
             data.append(sample)
-            file.append(doc.get("file"))
+            if sample:
+                file.append(doc.get("file"))
 
         tasks = [
             outlier_detection_task.remote(data, {"detector": options.get("detector")})
