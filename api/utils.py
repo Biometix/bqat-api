@@ -722,6 +722,10 @@ async def run_report_tasks(
 
         print(f">> Generate report: {dataset_id}")
 
+        tid = task["tid"]
+        if not await queue.exists(tid):
+            await queue.set(tid, TaskQueue(total=1, eta=-1).model_dump_json())
+
         options = task.get("options")
         options.update({"collection": dataset_id})
         if not external:
@@ -786,6 +790,7 @@ async def run_report_tasks(
         )
         await cache.ltrim("task_refs", 1, 0)
         await queue.rpop("task_queue")
+        await queue.delete(tid)
 
         task_timer = time.time() - task_timer
         print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
@@ -821,6 +826,8 @@ async def run_outlier_detection_tasks(
         dataset_id = task.get("collection")
         options = task.get("options")
         ods = []
+        if not await queue.exists(tid):
+            await queue.set(tid, TaskQueue(total=1, eta=-1).model_dump_json())
 
         for doc in await scan[dataset_id].find().to_list(length=None):
             # TODO instead of reconstruct a dict list, make the query with required columns
@@ -937,6 +944,7 @@ async def run_outlier_detection_tasks(
             },
         )
         await queue.rpop("task_queue")
+        await queue.delete(tid)
 
         task_timer = time.time() - task_timer
         print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
