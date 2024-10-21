@@ -1,11 +1,12 @@
-import os
+# import os
 from contextlib import asynccontextmanager
 
 import uvicorn
 from beanie import init_beanie
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+
+# from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import asyncio as aioredis
 

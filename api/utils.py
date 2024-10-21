@@ -3,6 +3,7 @@ import csv
 import glob
 import hashlib
 import json
+import math
 import os
 import pickle
 import re
@@ -67,6 +68,7 @@ def scan_task(path, options):
             result = process(path, **options)
             # result.update({"tag": get_tag(result.get("file", path))})
     except Exception as e:
+        traceback.print_exception(e)
         print(f">>>> File scan error: {str(e)}")
         log = {"file": path, "error": str(e)}
         return log
@@ -78,6 +80,7 @@ def report_task(data, options):
     try:
         report = generate_report(data, **options)
     except Exception as e:
+        traceback.print_exception(e)
         print(f">>>> Report generation failed: {str(e)}")
         log = {"options": options, "error": str(e)}
         return log
@@ -89,6 +92,7 @@ def outlier_detection_task(data, options):
     try:
         outliers = get_outliers(data, **options)
     except Exception as e:
+        traceback.print_exception(e)
         print(f">>>> Outlier detection failed: {str(e)}")
         log = {"options": options, "error": str(e)}
         return log
@@ -816,17 +820,73 @@ async def run_outlier_detection_tasks(
         task = await log["outliers"].find_one({"tid": tid})
         dataset_id = task.get("collection")
         options = task.get("options")
+        ods = []
 
-        for doc in (
-            await scan[dataset_id].find().to_list(length=None)
-        ):  # TODO instead of reconstruct a dict list, make the query with required attributes
-            sample = {k: float(doc.get(k, 0)) for k in options.get("columns", [])}
-            data.append(sample)
-            if sample:
+        for doc in await scan[dataset_id].find().to_list(length=None):
+            # TODO instead of reconstruct a dict list, make the query with required columns
+            sample = {}
+            info = []
+            for c in options.get("columns", []):
+                if c not in doc.keys():
+                    continue
+                try:
+                    if not math.isnan(value := float(doc.get(c))):
+                        sample.update({c: value})
+                except Exception as e:
+                    info.append({c: doc.get(c), "error": str(e)})
+            if info:
+                ods.append(
+                    {
+                        "file": doc.get("file"),
+                        "score": -1,
+                        "info": info,
+                        "data": {
+                            key: (str(value) if np.isnan(value) else value)
+                            for key, value in sample.items()
+                        },
+                    }
+                )
+            elif sample:
+                data.append(sample)
                 file.append(doc.get("file"))
+            else:
+                ods.append(
+                    {
+                        "file": doc.get("file"),
+                        "score": -1,
+                        "info": [{"error": "no valid data"}],
+                        "data": None,
+                    }
+                )
+
+        data = (pd.DataFrame.from_records(data)).to_dict("records")
+        tmp_data = []
+        tmp_file = []
+        for f, d in zip(file, data):
+            if any(math.isnan(v) for v in d.values()):
+                item = {
+                    "file": f,
+                    "score": -1,
+                    "info": [{"error": "missing values detected"}],
+                    "data": {
+                        key: (str(value) if np.isnan(value) else value)
+                        for key, value in d.items()
+                    },
+                }
+                ods.append(item)
+            else:
+                tmp_data.append(d)
+                tmp_file.append(f)
+        data = tmp_data
+        file = tmp_file
 
         tasks = [
-            outlier_detection_task.remote(data, {"detector": options.get("detector")})
+            outlier_detection_task.remote(
+                data,
+                {
+                    "detector": options.get("detector"),
+                },
+            )
         ]
 
         await log["outliers"].find_one_and_update(
@@ -857,15 +917,20 @@ async def run_outlier_detection_tasks(
             return
 
         outliers = pd.DataFrame(
-            list(zip(file, label, score)), columns=["file", "label", "score"]
+            list(zip(file, label, score, data)),
+            columns=[
+                "file",
+                "label",
+                "score",
+                "data",
+            ],
         )
         outliers = outliers[outliers["label"] == 1].drop(["label"], axis=1)
-        outliers["collection"] = dataset_id
         await log["outliers"].find_one_and_update(
             {"tid": tid},
             {
                 "$set": {
-                    "outliers": outliers.to_dict("records"),
+                    "outliers": outliers.to_dict("records") + ods,
                     "modified": datetime.now(),
                     "status": 2,
                 },

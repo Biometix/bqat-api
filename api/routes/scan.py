@@ -728,19 +728,14 @@ async def detect_outliers(
 @router.get("/{dataset_id}/outliers", response_description="Outliers retrieved",
             description="Retrieves outliers detected for a specific dataset."
 )
-async def get_outliers(dataset_id: str, request: Request):
-    if (
-        logs := await request.app.log["outliers"]
-        .find({"collection": dataset_id}, {"_id": 0})
-        .to_list(length=None)
+async def get_outliers(
+    dataset_id: str,
+    request: Request,
+):
+    if log := await request.app.log["outliers"].find_one(
+        {"collection": dataset_id}, {"_id": 0}
     ):
-        return [
-            {
-                "file": outlier["file"],
-                "score": outlier["score"],
-            }
-            for outlier in logs[0].get("outliers")
-        ]
+        return log.get("outliers")
 
 
 @router.delete(
