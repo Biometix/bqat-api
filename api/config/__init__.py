@@ -53,6 +53,7 @@ class DatabaseSettings(BaseSettings):
     MGO_URL: str
     SCAN_DB: str = "scan"
     LOG_DB: str = "log"
+    OUTLIER_DB: str = "outlier"
     RDS_URL: str
     QUEUE_DB: int = 10
     CACHE_DB: int = 11

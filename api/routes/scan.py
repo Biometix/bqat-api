@@ -706,7 +706,8 @@ async def detect_outliers(
     )
 
     if found and found.outliers:
-        found.outliers = []
+        await request.app.outlier[str(found.tid)].drop()
+        found.outliers = None
         await found.save()
 
     if trigger:
@@ -714,6 +715,7 @@ async def detect_outliers(
             run_outlier_detection_tasks,
             request.app.scan,
             request.app.log,
+            request.app.outlier,
             request.app.queue,
             request.app.cache,
             str(log.tid),
@@ -731,11 +733,23 @@ async def detect_outliers(
 async def get_outliers(
     dataset_id: str,
     request: Request,
+    skip: int = 0,
+    limit: int = 0,
 ):
     if log := await request.app.log["outliers"].find_one(
         {"collection": dataset_id}, {"_id": 0}
     ):
-        return log.get("outliers")
+        outliers = request.app.outlier[log.get("tid")].find({}, {"_id": 0})
+        if skip:
+            outliers = outliers.skip(skip)
+        if limit:
+            outliers = outliers.limit(limit)
+        return await outliers.to_list(length=None)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Outliers of [{dataset_id}] not found",
+        )
 
 
 @router.delete(

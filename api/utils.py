@@ -800,6 +800,7 @@ async def run_report_tasks(
 async def run_outlier_detection_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
+    outlier: AsyncIOMotorDatabase,
     queue: Redis,
     cache: Redis,
     task_id: str | None = None,
@@ -933,11 +934,13 @@ async def run_outlier_detection_tasks(
             ],
         )
         outliers = outliers[outliers["label"] == 1].drop(["label"], axis=1)
+        results = outliers.to_dict("records") + ods
+        await outlier[tid].insert_many(results)
         await log["outliers"].find_one_and_update(
             {"tid": tid},
             {
                 "$set": {
-                    "outliers": outliers.to_dict("records") + ods,
+                    "outliers": tid,
                     "modified": datetime.now(),
                     "status": 2,
                 },
