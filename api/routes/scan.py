@@ -740,6 +740,8 @@ async def get_outliers(
         {},
         {
             "_id": 0,
+            "file": 1,
+            "score": 1,
             "data": 1 if with_data else 0,
         },
     ):
