@@ -888,6 +888,22 @@ async def run_outlier_detection_tasks(
         data = tmp_data
         file = tmp_file
 
+        if not data:
+            await log["outliers"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "outliers": None,
+                        "modified": datetime.now(),
+                        "status": 2,
+                    },
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            print(">> No data sent throuhgh")
+            continue
+
         tasks = [
             outlier_detection_task.remote(
                 data,
