@@ -736,14 +736,15 @@ async def get_outliers(
     skip: int = 0,
     limit: int = 0,
 ):
+    fields = {
+        "_id": 0,
+        "file": 1,
+        "score": 1,
+    }
+    fields.update({"data": 1}) if with_data else fields
     if outliers := request.app.outlier[dataset_id].find(
         {},
-        {
-            "_id": 0,
-            "file": 1,
-            "score": 1,
-            "data": 1 if with_data else 0,
-        },
+        fields,
     ):
         if skip:
             outliers = outliers.skip(skip)
