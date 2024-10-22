@@ -687,15 +687,19 @@ async def detect_outliers(
                 detail=f"failed to retrieve target columns: {str(e)}",
             )
 
-    found = await OutlierDetectionLog.find_one(
+    old_log = await OutlierDetectionLog.find_one(
         OutlierDetectionLog.collection == dataset_id
     )
+    if old_log and old_log.outliers:
+        await request.app.outlier[dataset_id].drop()
+
     log = await OutlierDetectionLog.find_one(
         OutlierDetectionLog.collection == dataset_id
     ).upsert(
         Set(
             {
                 OutlierDetectionLog.options: options,
+                OutlierDetectionLog.outliers: None,
             }
         ),
         on_insert=OutlierDetectionLog(
@@ -704,11 +708,6 @@ async def detect_outliers(
         ),
         response_type=UpdateResponse.NEW_DOCUMENT,
     )
-
-    if found and found.outliers:
-        await request.app.outlier[str(found.tid)].drop()
-        found.outliers = None
-        await found.save()
 
     if trigger:
         background_tasks.add_task(
@@ -733,13 +732,17 @@ async def detect_outliers(
 async def get_outliers(
     dataset_id: str,
     request: Request,
+    with_data: bool = False,
     skip: int = 0,
     limit: int = 0,
 ):
-    if log := await request.app.log["outliers"].find_one(
-        {"collection": dataset_id}, {"_id": 0}
+    if outliers := request.app.outlier[dataset_id].find(
+        {},
+        {
+            "_id": 0,
+            "data": 1 if with_data else 0,
+        },
     ):
-        outliers = request.app.outlier[log.get("tid")].find({}, {"_id": 0})
         if skip:
             outliers = outliers.skip(skip)
         if limit:

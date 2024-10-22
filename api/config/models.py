@@ -435,7 +435,7 @@ class OutlierDetectionLog(Document):
     tid: UUID = Field(default_factory=uuid4)
     collection: Union[UUID, str, None]
     options: Union[DetectorOptions, None] = DetectorOptions()
-    outliers: Union[str, None] = None
+    outliers: Union[int, None] = None
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
 

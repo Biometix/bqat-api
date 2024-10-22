@@ -854,7 +854,7 @@ async def run_outlier_detection_tasks(
                         },
                     }
                 )
-            elif sample:
+            elif len(sample) > 1:
                 data.append(sample)
                 file.append(doc.get("file"))
             else:
@@ -935,12 +935,12 @@ async def run_outlier_detection_tasks(
         )
         outliers = outliers[outliers["label"] == 1].drop(["label"], axis=1)
         results = outliers.to_dict("records") + ods
-        await outlier[tid].insert_many(results)
+        inserted = await outlier[dataset_id].insert_many(results)
         await log["outliers"].find_one_and_update(
             {"tid": tid},
             {
                 "$set": {
-                    "outliers": tid,
+                    "outliers": len(inserted.inserted_ids),
                     "modified": datetime.now(),
                     "status": 2,
                 },
