@@ -123,11 +123,13 @@ class Detector(Enum):
 class DetectorOptions(BaseModel):
     detector: Detector | None = Detector.ecod
     columns: List[str] | None = None
+    contamination: float | None = 0.05
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "detector": "ECOD",
+                "contamination": 0.1,
                 "columns": [
                     "ipd",
                     "yaw_degree",

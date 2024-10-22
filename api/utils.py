@@ -854,7 +854,7 @@ async def run_outlier_detection_tasks(
                         },
                     }
                 )
-            elif len(sample) > 1:
+            elif sample:
                 data.append(sample)
                 file.append(doc.get("file"))
             else:
@@ -1357,27 +1357,29 @@ def get_tag(identifier):
     return tag.hexdigest()
 
 
-def get_outliers(data: list, detector: str = "ECOD"):
+def get_outliers(data: list, detector: str = "ECOD", contamination=0.05):
+    workers = -1 if len(data[0]) > 1 else 1
+
     match detector:
         case "ECOD":
-            clf = ECOD(n_jobs=-1)
+            clf = ECOD(n_jobs=workers, contamination=contamination)
         case "CBLOF":
-            clf = CBLOF(n_jobs=-1)
+            clf = CBLOF(n_jobs=workers, contamination=contamination)
         case "IForest":
-            clf = IForest(n_jobs=-1)
+            clf = IForest(n_jobs=workers, contamination=contamination)
         case "KNN":
-            clf = KNN(n_jobs=-1)
+            clf = KNN(n_jobs=workers, contamination=contamination)
         case "COPOD":
-            clf = COPOD(n_jobs=-1)
+            clf = COPOD(n_jobs=workers, contamination=contamination)
         case "PCA":
-            clf = PCA()
+            clf = PCA(contamination=contamination)
         # case "DeepSVDD":
         #     clf = DeepSVDD()
         # case "DIF":
         #     clf = DIF()
         case _:
             print(f"detector: {detector} not recognized, fallback to ECOD.")
-            clf = ECOD(n_jobs=-1)
+            clf = ECOD(n_jobs=workers)
 
     clf.fit(pd.DataFrame.from_records(data))
     labels = clf.labels_
