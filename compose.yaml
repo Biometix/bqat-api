@@ -29,6 +29,7 @@ services:
 
   server:
     image: bqat-api:latest
+    restart: always
     build:
       context: .
       args:
@@ -38,10 +39,15 @@ services:
     shm_size: 8gb
     ports:
       - 8848:8848
+    healthcheck:
+      test: curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || kill 1
+      timeout: 5m
+      retries: 1
     depends_on:
       - mongo
       - redis
     environment:
+      PORT: 8848
       DEBUG_MODE: YES
       MGO_URL: mongodb://mongo:27017/
       RDS_URL: redis://redis:6379/
