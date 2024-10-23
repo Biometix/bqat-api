@@ -123,7 +123,7 @@ class Detector(Enum):
 class DetectorOptions(BaseModel):
     detector: Detector | None = Detector.ecod
     columns: List[str] | None = None
-    contamination: float | None = 0.05
+    contamination: float | None = Field(gt=0, lt=1)
 
     model_config = ConfigDict(
         json_schema_extra={

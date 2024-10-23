@@ -43,7 +43,7 @@ from api.utils import (
     check_options,
     # edit_attributes,
     get_files,
-    get_info,
+    # get_info,
     # get_tag,
     remove_report,
     retrieve_report,
@@ -1231,10 +1231,10 @@ async def clear_task_queue(request: Request):
     )
 
 
-@router.get("/info", response_description="BQAT backend info retrieved",description="Fetches version information."
-)
-async def get_version_info():
-    return JSONResponse(status_code=status.HTTP_200_OK, content=get_info())
+# @router.get("/info", response_description="BQAT backend info retrieved",description="Fetches version information."
+# )
+# async def get_version_info():
+#     return JSONResponse(status_code=status.HTTP_200_OK, content=get_info())
 
 
 @router.post(

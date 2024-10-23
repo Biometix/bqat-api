@@ -253,7 +253,13 @@ async def run_scan_tasks(
                                 },
                             )
                             await cache.ltrim("task_refs", 1, 0)
-                        except (ray.exceptions.TaskCancelledError, ValueError):
+                        except (
+                            (
+                                ray.exceptions.TaskCancelledError,
+                                ray.exceptions.OutOfMemoryError,
+                            ),
+                            ValueError,
+                        ):
                             print(f"Task was cancelled: {tid}")
                             await log["tasks"].find_one_and_update(
                                 {"tid": task["tid"]},
@@ -429,7 +435,13 @@ async def run_scan_tasks(
                                 ready, not_ready = ray.wait(not_ready, timeout=3)
                                 print(f"{datetime.now()}: processing...")
                             outputs = ray.get(subtasks)
-                        except (ray.exceptions.TaskCancelledError, ValueError):
+                        except (
+                            (
+                                ray.exceptions.TaskCancelledError,
+                                ray.exceptions.OutOfMemoryError,
+                            ),
+                            ValueError,
+                        ):
                             print(f"Task was cancelled: {tid}")
                             await log["tasks"].find_one_and_update(
                                 {"tid": task["tid"]},
@@ -558,7 +570,13 @@ async def run_scan_tasks(
                                 if step < 1:
                                     step = 1
                                     gear = 1
-                        except (ray.exceptions.TaskCancelledError, ValueError):
+                        except (
+                            (
+                                ray.exceptions.TaskCancelledError,
+                                ray.exceptions.OutOfMemoryError,
+                            ),
+                            ValueError,
+                        ):
                             print(f"Task was cancelled: {tid}")
                             await log["tasks"].find_one_and_update(
                                 {"tid": task["tid"]},
@@ -753,7 +771,7 @@ async def run_report_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             html_content = ray.get(ready[0])
-        except ray.exceptions.TaskCancelledError:
+        except (ray.exceptions.TaskCancelledError, ray.exceptions.OutOfMemoryError):
             print(f"Task was cancelled: {task['tid']}")
             await log["reports"].find_one_and_update(
                 {"tid": task["tid"]},
@@ -909,6 +927,7 @@ async def run_outlier_detection_tasks(
                 data,
                 {
                     "detector": options.get("detector"),
+                    "contamination": options.get("contamination"),
                 },
             )
         ]
@@ -928,13 +947,13 @@ async def run_outlier_detection_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             label, score = ray.get(ready[0])
-        except ray.exceptions.TaskCancelledError:
+        except (ray.exceptions.TaskCancelledError, ray.exceptions.OutOfMemoryError):
             print(f"Task was cancelled: {tid}")
             await log["outliers"].find_one_and_update(
                 {"tid": tid},
                 {
                     "$set": {
-                        "status": 0,
+                        "status": 2,
                     },
                 },
             )
@@ -1073,7 +1092,10 @@ async def run_preprocessing_tasks(
 
                 try:
                     ready, not_ready = ray.wait(tasks, num_returns=eta_step, timeout=3)
-                except ray.exceptions.TaskCancelledError:
+                except (
+                    ray.exceptions.TaskCancelledError,
+                    ray.exceptions.OutOfMemoryError,
+                ):
                     print(f"Task was cancelled: {task['tid']}")
                     await log["preprocessings"].find_one_and_update(
                         {"tid": tid},
@@ -1357,7 +1379,11 @@ def get_tag(identifier):
     return tag.hexdigest()
 
 
-def get_outliers(data: list, detector: str = "ECOD", contamination=0.05):
+def get_outliers(
+    data: list,
+    detector: str = "ECOD",
+    contamination: float = 0.05,
+):
     workers = -1 if len(data[0]) > 1 else 1
 
     match detector:
