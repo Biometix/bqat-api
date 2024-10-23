@@ -123,7 +123,7 @@ class Detector(Enum):
 class DetectorOptions(BaseModel):
     detector: Detector | None = Detector.ecod
     columns: List[str] | None = None
-    contamination: float | None = Field(gt=0, lt=1)
+    contamination: float = Field(default=0.05, gt=0, lt=1)
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -456,6 +456,7 @@ class OutlierDetectionLog(Document):
                         "pitch_degree",
                         "roll_degree",
                     ],
+                    "contamination": 0.1,
                 }
             }
         }
