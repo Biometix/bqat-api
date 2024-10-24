@@ -253,25 +253,51 @@ async def run_scan_tasks(
                                 },
                             )
                             await cache.ltrim("task_refs", 1, 0)
-                        except (
-                            (
-                                ray.exceptions.TaskCancelledError,
-                                ray.exceptions.OutOfMemoryError,
-                            ),
-                            ValueError,
-                        ):
-                            print(f"Task was cancelled: {tid}")
+                        except ray.exceptions.TaskCancelledError:
+                            print(f"Scan task was cancelled: {tid}")
+                            await log["tasks"].find_one_and_delete(
+                                {"tid": tid},
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            ray.shutdown()
+                            return
+                        except ray.exceptions.OutOfMemoryError:
+                            print(f"Scan task ended: {tid}")
                             await log["tasks"].find_one_and_update(
-                                {"tid": task["tid"]},
+                                {"tid": tid},
                                 {
                                     "$set": {
-                                        "status": 0,
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": "Task was killed due to the node running low on memory.",
                                     },
                                 },
                             )
-                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            ray.shutdown()
                             return
+                        except Exception as e:
+                            print(f"Scan task ended: {tid}")
+                            traceback.print_exception(e)
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": str(e),
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            ray.shutdown()
+                            return
+
                         batch_count = 0
                         for output in outputs:
                             result_list = output.get("results", [])
@@ -435,25 +461,51 @@ async def run_scan_tasks(
                                 ready, not_ready = ray.wait(not_ready, timeout=3)
                                 print(f"{datetime.now()}: processing...")
                             outputs = ray.get(subtasks)
-                        except (
-                            (
-                                ray.exceptions.TaskCancelledError,
-                                ray.exceptions.OutOfMemoryError,
-                            ),
-                            ValueError,
-                        ):
-                            print(f"Task was cancelled: {tid}")
+                        except ray.exceptions.TaskCancelledError:
+                            print(f"Scan task was cancelled: {tid}")
+                            await log["tasks"].find_one_and_delete(
+                                {"tid": tid},
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            ray.shutdown()
+                            return
+                        except ray.exceptions.OutOfMemoryError:
+                            print(f"Scan task ended: {tid}")
                             await log["tasks"].find_one_and_update(
-                                {"tid": task["tid"]},
+                                {"tid": tid},
                                 {
                                     "$set": {
-                                        "status": 0,
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": "Task was killed due to the node running low on memory.",
                                     },
                                 },
                             )
-                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            ray.shutdown()
                             return
+                        except Exception as e:
+                            print(f"Scan task ended: {tid}")
+                            traceback.print_exception(e)
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": str(e),
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            ray.shutdown()
+                            return
+
                         for output in outputs:
                             result_list = output.get("results", [])
                             for result in result_list:
@@ -570,25 +622,51 @@ async def run_scan_tasks(
                                 if step < 1:
                                     step = 1
                                     gear = 1
-                        except (
-                            (
-                                ray.exceptions.TaskCancelledError,
-                                ray.exceptions.OutOfMemoryError,
-                            ),
-                            ValueError,
-                        ):
-                            print(f"Task was cancelled: {tid}")
+                        except ray.exceptions.TaskCancelledError:
+                            print(f"Scan task was cancelled: {tid}")
+                            await log["tasks"].find_one_and_delete(
+                                {"tid": tid},
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            ray.shutdown()
+                            return
+                        except ray.exceptions.OutOfMemoryError:
+                            print(f"Scan task ended: {tid}")
                             await log["tasks"].find_one_and_update(
-                                {"tid": task["tid"]},
+                                {"tid": tid},
                                 {
                                     "$set": {
-                                        "status": 0,
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": "Task was killed due to the node running low on memory.",
                                     },
                                 },
                             )
-                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            ray.shutdown()
                             return
+                        except Exception as e:
+                            print(f"Scan task ended: {tid}")
+                            traceback.print_exception(e)
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": str(e),
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            ray.shutdown()
+                            return
+
                         if not results:
                             break
                         counter += len(ready)
@@ -709,7 +787,7 @@ async def run_report_tasks(
         tid = str(task.get("tid"))
         await queue.lpush("task_queue", tid)
 
-    for task in tasks:
+    while await queue.llen("task_queue") > 0:
         task_timer = time.time()
         data = []
 
@@ -771,18 +849,51 @@ async def run_report_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             html_content = ray.get(ready[0])
-        except (ray.exceptions.TaskCancelledError, ray.exceptions.OutOfMemoryError):
-            print(f"Task was cancelled: {task['tid']}")
+        except ray.exceptions.TaskCancelledError:
+            print(f"Reporting task was cancelled: {tid}")
+            await log["reports"].find_one_and_delete(
+                {"tid": tid},
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            ray.shutdown()
+            return
+        except ray.exceptions.OutOfMemoryError:
+            print(f"Reporting task ended: {tid}")
             await log["reports"].find_one_and_update(
-                {"tid": task["tid"]},
+                {"tid": tid},
                 {
                     "$set": {
-                        "status": 0,
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": "Task was killed due to the node running low on memory.",
                     },
                 },
             )
-            await cache.ltrim("task_refs", 1, 0)
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            ray.shutdown()
             return
+        except Exception as e:
+            print(f"Reporting task ended: {tid}")
+            traceback.print_exception(e)
+            await log["reports"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": str(e),
+                    },
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            ray.shutdown()
+            return
+
         fs = AsyncIOMotorGridFSBucket(log)
 
         filename = f"report_{dataset_id}.html"
@@ -947,16 +1058,49 @@ async def run_outlier_detection_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             label, score = ray.get(ready[0])
-        except (ray.exceptions.TaskCancelledError, ray.exceptions.OutOfMemoryError):
-            print(f"Task was cancelled: {tid}")
+        except ray.exceptions.TaskCancelledError:
+            print(f"Outlier detection task was cancelled: {tid}")
+            await log["outliers"].find_one_and_delete(
+                {"tid": tid},
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            ray.shutdown()
+            return
+        except ray.exceptions.OutOfMemoryError:
+            print(f"Outlier detection task ended: {tid}")
             await log["outliers"].find_one_and_update(
                 {"tid": tid},
                 {
                     "$set": {
-                        "status": 2,
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": "Task was killed due to the node running low on memory.",
                     },
                 },
             )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            ray.shutdown()
+            return
+        except Exception as e:
+            print(f"Outlier detection task ended: {tid}")
+            traceback.print_exception(e)
+            await log["outliers"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": str(e),
+                    },
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            ray.shutdown()
             return
 
         outliers = pd.DataFrame(
@@ -1092,20 +1236,49 @@ async def run_preprocessing_tasks(
 
                 try:
                     ready, not_ready = ray.wait(tasks, num_returns=eta_step, timeout=3)
-                except (
-                    ray.exceptions.TaskCancelledError,
-                    ray.exceptions.OutOfMemoryError,
-                ):
-                    print(f"Task was cancelled: {task['tid']}")
+                except ray.exceptions.TaskCancelledError:
+                    print(f"Pre-processing task was cancelled: {tid}")
+                    await log["preprocessings"].find_one_and_delete(
+                        {"tid": tid},
+                    )
+                    await queue.rpop("task_queue")
+                    await queue.delete(tid)
+                    ray.shutdown()
+                    return
+                except ray.exceptions.OutOfMemoryError:
+                    print(f"Pre-processing task ended: {tid}")
                     await log["preprocessings"].find_one_and_update(
                         {"tid": tid},
                         {
                             "$set": {
-                                "status": 0,
+                                "status": 3,
+                            },
+                            "$push": {
+                                "logs": "Task was killed due to the node running low on memory.",
                             },
                         },
                     )
-                    await cache.ltrim("task_refs", 1, 0)
+                    await queue.rpop("task_queue")
+                    await queue.delete(tid)
+                    ray.shutdown()
+                    return
+                except Exception as e:
+                    print(f"Pre-processing task ended: {tid}")
+                    traceback.print_exception(e)
+                    await log["preprocessings"].find_one_and_update(
+                        {"tid": tid},
+                        {
+                            "$set": {
+                                "status": 3,
+                            },
+                            "$push": {
+                                "logs": str(e),
+                            },
+                        },
+                    )
+                    await queue.rpop("task_queue")
+                    await queue.delete(tid)
+                    ray.shutdown()
                     return
                 p.update(task_progress, advance=len(ready))
                 counter += len(ready)

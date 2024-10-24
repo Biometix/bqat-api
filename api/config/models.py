@@ -404,6 +404,7 @@ class Status(IntEnum):
     new = 0
     running = 1
     done = 2
+    error = 3
 
 
 class ReportLog(Document):
@@ -416,6 +417,7 @@ class ReportLog(Document):
     filename: Union[str, None] = None
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "reports"
@@ -440,6 +442,7 @@ class OutlierDetectionLog(Document):
     outliers: Union[int, None] = None
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "outliers"
@@ -471,6 +474,7 @@ class PreprocessingLog(Document):
     options: PreprocessingOptions = PreprocessingOptions()
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "preprocessings"
@@ -508,6 +512,7 @@ class TaskLog(Document):
     finished: int = 0
     elapse: float = 0.0
     modified: datetime = Field(default_factory=datetime.now)
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "tasks"
@@ -560,6 +565,7 @@ class CollectionLog(Document):
     created: datetime = Field(default_factory=datetime.now)
     modified: datetime = created
     samples: int = 0
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "datasets"
@@ -583,6 +589,7 @@ class SampleLog(Document):
     collection: str
     path: str
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "samples"

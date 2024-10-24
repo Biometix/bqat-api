@@ -61,6 +61,7 @@ async def get_all_task_logs(request: Request) -> list:
                         "finished": 1,
                         "elapse": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -93,6 +94,7 @@ async def get_all_report_logs(request: Request) -> list:
                         "file_id": 1,
                         "filename": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -121,6 +123,7 @@ async def get_all_outlier_logs(request: Request) -> list:
                         "status": 1,
                         "tid": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -151,6 +154,7 @@ async def get_all_preprocessing_logs(request: Request) -> list:
                         "source": 1,
                         "target": 1,
                         "input_format": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -185,6 +189,7 @@ async def get_task_log(request: Request, task_id: str) -> list:
                         "finished": 1,
                         "elapse": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -220,6 +225,7 @@ async def get_report_log(request: Request, task_id: str) -> list:
                         "file_id": 1,
                         "filename": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -251,6 +257,7 @@ async def get_outlier_log(request: Request, task_id: str) -> list:
                         "status": 1,
                         "tid": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -284,6 +291,7 @@ async def get_preprocessing_log(request: Request, task_id: str) -> list:
                         "source": 1,
                         "target": 1,
                         "input_format": 1,
+                        "logs": 1,
                     },
                 },
             ]

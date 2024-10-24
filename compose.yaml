@@ -41,6 +41,7 @@ services:
       - 8848:8848
     healthcheck:
       test: curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || kill 1
+      interval: 5m
       timeout: 5m
       retries: 1
     depends_on:
