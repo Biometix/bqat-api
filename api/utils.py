@@ -254,9 +254,14 @@ async def run_scan_tasks(
                             )
                             await cache.ltrim("task_refs", 1, 0)
                         except (ray.exceptions.TaskCancelledError, ValueError):
-                            print(f"Scan task was cancelled: {tid}")
-                            await log["tasks"].find_one_and_delete(
+                            print(f"Scan task was stopped: {tid}")
+                            await log["tasks"].find_one_and_update(
                                 {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 2,
+                                    },
+                                },
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
@@ -462,9 +467,14 @@ async def run_scan_tasks(
                                 print(f"{datetime.now()}: processing...")
                             outputs = ray.get(subtasks)
                         except (ray.exceptions.TaskCancelledError, ValueError):
-                            print(f"Scan task was cancelled: {tid}")
-                            await log["tasks"].find_one_and_delete(
+                            print(f"Scan task was stopped: {tid}")
+                            await log["tasks"].find_one_and_update(
                                 {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 2,
+                                    },
+                                },
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
@@ -623,9 +633,14 @@ async def run_scan_tasks(
                                     step = 1
                                     gear = 1
                         except (ray.exceptions.TaskCancelledError, ValueError):
-                            print(f"Scan task was cancelled: {tid}")
-                            await log["tasks"].find_one_and_delete(
+                            print(f"Scan task was stopped: {tid}")
+                            await log["tasks"].find_one_and_update(
                                 {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 2,
+                                    },
+                                },
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
