@@ -259,7 +259,7 @@ async def run_scan_tasks(
                                 {"tid": tid},
                                 {
                                     "$set": {
-                                        "status": 2,
+                                        "status": 0,
                                     },
                                 },
                             )
@@ -472,7 +472,7 @@ async def run_scan_tasks(
                                 {"tid": tid},
                                 {
                                     "$set": {
-                                        "status": 2,
+                                        "status": 0,
                                     },
                                 },
                             )
@@ -638,7 +638,7 @@ async def run_scan_tasks(
                                 {"tid": tid},
                                 {
                                     "$set": {
-                                        "status": 2,
+                                        "status": 0,
                                     },
                                 },
                             )
