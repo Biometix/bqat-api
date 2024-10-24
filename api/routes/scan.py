@@ -542,6 +542,18 @@ async def retrieve_all(
     return await profiles.to_list(length=None)
 
 
+@router.get(
+    "/{dataset_id}/profiles/count",
+    response_description="Estimate of the number of profiles in this dataset",
+    description="Count the number of profiles in this collection.",
+)
+async def retrieve_all_count(
+    dataset_id: str,
+    request: Request,
+) -> int:
+    return await request.app.scan[dataset_id].estimated_document_count()
+
+
 @router.delete(
     "/{dataset_id}/profiles",
     response_description="All image profiles for this dataset deleted",
