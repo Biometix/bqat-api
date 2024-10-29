@@ -310,6 +310,21 @@ async def get_task_status(
     rds = request.app.queue
     if not (status := await rds.get(str(task_id))):
         raise HTTPException(status_code=404, detail="Task not found!")
+    if not (log := await TaskLog.find_one(TaskLog.tid == str(task_id))):
+        if not (log := await ReportLog.find_one(ReportLog.tid == str(task_id))):
+            if not (
+                log := await OutlierDetectionLog.find_one(
+                    OutlierDetectionLog.tid == str(task_id)
+                )
+            ):
+                if not (
+                    log := await PreprocessingLog.find_one(
+                        PreprocessingLog.tid == str(task_id)
+                    )
+                ):
+                    raise HTTPException(status_code=404, detail="Task log not found!")
+    if log.status == Status.error:
+        raise HTTPException(status_code=404, detail="Task failed.")
     return json.loads(status)
 
 
