@@ -1202,7 +1202,13 @@ async def resume_task(
             await request.app.log["tasks"]
             .find(
                 {
-                    "status": {"$lt": 2},
+                    "status": {
+                        "$in": [
+                            Status.new,
+                            Status.running,
+                            Status.error,
+                        ]
+                    },
                     "tid": task_id,
                 },
             )

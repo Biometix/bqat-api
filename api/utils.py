@@ -781,6 +781,7 @@ async def run_scan_tasks(
         print(f"> Task ended:\n---\n{str(e)}\n---")
 
     print(">>> Finished <<<\n")
+    ray.shutdown()
 
 
 async def run_report_tasks(
