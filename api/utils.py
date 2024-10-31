@@ -100,7 +100,7 @@ def outlier_detection_task(data, options):
 
 
 @ray.remote
-def preprocess_task(file: str, output: dir, config: dict) -> None:
+def preprocess_task(file: str, output: str, config: dict) -> None:
     try:
         import wsq
         file = Path(file)
@@ -1215,7 +1215,7 @@ async def run_preprocessing_tasks(
         if not await queue.exists(tid):
             await queue.set(tid, TaskQueue(total=file_total).model_dump_json())
 
-        output_dir = task.get("source") + "/" + tid
+        output_dir = task.get("source") + f"_{tid[:5]}"
         config = {
             "frac": task["options"].get("scale"),
             "width": task["options"].get("resize"),
