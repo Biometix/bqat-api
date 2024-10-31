@@ -253,7 +253,11 @@ async def run_scan_tasks(
                                 },
                             )
                             await cache.ltrim("task_refs", 1, 0)
-                        except (ray.exceptions.TaskCancelledError, ValueError):
+                        except (
+                            ray.exceptions.TaskCancelledError,
+                            ValueError,
+                            AttributeError,
+                        ):
                             print(f"Scan task was stopped: {tid}")
                             await log["tasks"].find_one_and_update(
                                 {"tid": tid},
@@ -466,7 +470,11 @@ async def run_scan_tasks(
                                 ready, not_ready = ray.wait(not_ready, timeout=3)
                                 print(f"{datetime.now()}: processing...")
                             outputs = ray.get(subtasks)
-                        except (ray.exceptions.TaskCancelledError, ValueError):
+                        except (
+                            ray.exceptions.TaskCancelledError,
+                            ValueError,
+                            AttributeError,
+                        ):
                             print(f"Scan task was stopped: {tid}")
                             await log["tasks"].find_one_and_update(
                                 {"tid": tid},
@@ -593,6 +601,7 @@ async def run_scan_tasks(
                 await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
 
                 step = Settings().TASK_WAIT_INTERVAL_STEP
+                throughput = step
                 counter = 0
                 gear = 1
                 with Progress(
@@ -601,7 +610,7 @@ async def run_scan_tasks(
                     *Progress.get_default_columns(),
                 ) as p:
                     task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
-                    scan_timer = time.time()
+                    scan_start = time.time()
                     while not p.finished:
                         await asyncio.sleep(Settings().TASK_WAIT_INTERVAL_SLEEP)
                         try:
@@ -625,14 +634,27 @@ async def run_scan_tasks(
                                 results = ray.get(ready)
                                 if len(results) < step:
                                     step = len(results)
-                                    gear = 1
+                                    gear /= 2
                                 else:
-                                    step += int(0.5 * gear * step)
+                                    step = int(
+                                        gear
+                                        * (
+                                            throughput
+                                            * (
+                                                Settings().TASK_WAIT_INTERVAL_TIMEOUT
+                                                + Settings().TASK_WAIT_INTERVAL_SLEEP
+                                            )
+                                        )
+                                    )
                                     gear += 1
                                 if step < 1:
                                     step = 1
                                     gear = 1
-                        except (ray.exceptions.TaskCancelledError, ValueError):
+                        except (
+                            ray.exceptions.TaskCancelledError,
+                            ValueError,
+                            AttributeError,
+                        ):
                             print(f"Scan task was stopped: {tid}")
                             await log["tasks"].find_one_and_update(
                                 {"tid": tid},
@@ -705,7 +727,8 @@ async def run_scan_tasks(
                             ]
                         )
 
-                        scan_timer = time.time() - scan_timer
+                        scan_timer = time.time() - scan_start
+                        scan_start = time.time()
                         p.update(task_progress, advance=len(files))
                         task = await log["tasks"].find_one_and_update(
                             {"tid": tid},
@@ -740,7 +763,6 @@ async def run_scan_tasks(
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
                         tasks = not_ready
-                        scan_timer = time.time()
 
                 task = await log["tasks"].find_one({"tid": tid})
                 if task and (task.get("total", 0) <= task.get("finished")):
@@ -865,7 +887,7 @@ async def run_report_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             html_content = ray.get(ready[0])
-        except (ray.exceptions.TaskCancelledError, ValueError):
+        except (ray.exceptions.TaskCancelledError, ValueError, AttributeError):
             print(f"Reporting task was cancelled: {tid}")
             await log["reports"].find_one_and_delete(
                 {"tid": tid},
@@ -1074,7 +1096,7 @@ async def run_outlier_detection_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             label, score = ray.get(ready[0])
-        except (ray.exceptions.TaskCancelledError, ValueError):
+        except (ray.exceptions.TaskCancelledError, ValueError, AttributeError):
             print(f"Outlier detection task was cancelled: {tid}")
             await log["outliers"].find_one_and_delete(
                 {"tid": tid},
@@ -1252,7 +1274,7 @@ async def run_preprocessing_tasks(
 
                 try:
                     ready, not_ready = ray.wait(tasks, num_returns=eta_step, timeout=3)
-                except (ray.exceptions.TaskCancelledError, ValueError):
+                except (ray.exceptions.TaskCancelledError, ValueError, AttributeError):
                     print(f"Pre-processing task was cancelled: {tid}")
                     await log["preprocessings"].find_one_and_delete(
                         {"tid": tid},
