@@ -1,4 +1,5 @@
 import json
+import os
 
 # import pickle
 from pathlib import Path
@@ -703,7 +704,16 @@ async def get_input_folders() -> list[str]:
     ]
     ```
     """
-    return [dir.as_posix() for dir in Path(Settings().DATA).rglob("*") if dir.is_dir()]
+    folders = []
+    with os.scandir(Settings().DATA) as data_folder:
+        for entry in data_folder:
+            if entry.is_dir():
+                folders.append(entry.path)
+            if entry.name == "uploaded":
+                folders.extend(
+                    [entry.path for entry in os.scandir(entry) if entry.is_dir()]
+                )
+    return folders
 
 
 @router.get(
