@@ -26,6 +26,10 @@
 
 - Support JP2, WSQ image preview
 
+- Add provisional support for fusion engine
+
+- Add container health check logic
+
 ## ⚙️ Miscellaneous Tasks
 
 - Migrate to Pydantic V2
