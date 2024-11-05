@@ -159,6 +159,13 @@ async def run_scan_tasks(
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     if task_id:
         tasks = await log["tasks"].find({"tid": task_id}).to_list(length=None)
     else:
@@ -270,6 +277,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
                         except ray.exceptions.OutOfMemoryError:
@@ -287,6 +295,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
                         except Exception as e:
@@ -305,6 +314,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
 
@@ -488,6 +498,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
                         except ray.exceptions.OutOfMemoryError:
@@ -505,6 +516,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
                         except Exception as e:
@@ -523,6 +535,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
 
@@ -669,6 +682,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
                         except ray.exceptions.OutOfMemoryError:
@@ -686,6 +700,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
                         except Exception as e:
@@ -704,6 +719,7 @@ async def run_scan_tasks(
                             )
                             await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
                             ray.shutdown()
                             return
 
@@ -816,6 +832,13 @@ async def run_report_tasks(
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     tasks = []
     if not task_id:
         for task in await log["reports"].find().to_list(length=None):
@@ -902,6 +925,7 @@ async def run_report_tasks(
             )
             await queue.rpop("task_queue")
             await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
             ray.shutdown()
             return
         except ray.exceptions.OutOfMemoryError:
@@ -919,6 +943,7 @@ async def run_report_tasks(
             )
             await queue.rpop("task_queue")
             await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
             ray.shutdown()
             return
         except Exception as e:
@@ -937,6 +962,7 @@ async def run_report_tasks(
             )
             await queue.rpop("task_queue")
             await queue.delete(tid)
+            await cache.rpop("task_refs")
             ray.shutdown()
             return
 
@@ -980,6 +1006,13 @@ async def run_outlier_detection_tasks(
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     if task_id:
         tasks = [await log["outliers"].find_one({"tid": task_id})]
     else:
@@ -1116,6 +1149,7 @@ async def run_outlier_detection_tasks(
             )
             await queue.rpop("task_queue")
             await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
             ray.shutdown()
             return
         except ray.exceptions.OutOfMemoryError:
@@ -1133,6 +1167,7 @@ async def run_outlier_detection_tasks(
             )
             await queue.rpop("task_queue")
             await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
             ray.shutdown()
             return
         except Exception as e:
@@ -1151,6 +1186,7 @@ async def run_outlier_detection_tasks(
             )
             await queue.rpop("task_queue")
             await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
             ray.shutdown()
             return
 
@@ -1178,6 +1214,7 @@ async def run_outlier_detection_tasks(
         )
         await queue.rpop("task_queue")
         await queue.delete(tid)
+        await cache.rpop("task_refs")
 
         task_timer = time.time() - task_timer
         print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
@@ -1190,6 +1227,13 @@ async def run_preprocessing_tasks(
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     if task_id:
         tasks = [await log["preprocessings"].find_one({"tid": task_id})]
     else:
@@ -1299,6 +1343,7 @@ async def run_preprocessing_tasks(
                     )
                     await queue.rpop("task_queue")
                     await queue.delete(tid)
+                    await cache.ltrim("task_refs", 1, 0)
                     ray.shutdown()
                     return
                 except ray.exceptions.OutOfMemoryError:
@@ -1316,6 +1361,7 @@ async def run_preprocessing_tasks(
                     )
                     await queue.rpop("task_queue")
                     await queue.delete(tid)
+                    await cache.ltrim("task_refs", 1, 0)
                     ray.shutdown()
                     return
                 except Exception as e:
@@ -1334,6 +1380,7 @@ async def run_preprocessing_tasks(
                     )
                     await queue.rpop("task_queue")
                     await queue.delete(tid)
+                    await cache.ltrim("task_refs", 1, 0)
                     ray.shutdown()
                     return
                 p.update(task_progress, advance=len(ready))

@@ -205,13 +205,11 @@ class ScanOptions(BaseModel):
     engine: Union[Engine, None] = None
     source: Union[List[Format], None] = None
     target: Union[Format, None] = None
-    confidence: Union[float, None] = None
+    confidence: Union[float, None] = 0.7
     pattern: Union[str, None] = None
     type: Union[str, None] = None
     batch: Union[int, None] = None
-    # quality: bool = True
-    # head: bool = True
-    # face: bool = True
+    fusion: Union[int, None] = 6
 
 
 class Folder(BaseModel):

@@ -176,7 +176,8 @@ async def post_remote_task(
     background_tasks: BackgroundTasks,
     files: List[UploadFile],
     modality: Modality,
-    engine: str | None = None,
+    engine: Engine | None = Engine.bqat,
+    fusion: int | None = 6,
     trigger: bool = True,
 ):
     if not modality:
@@ -201,7 +202,8 @@ async def post_remote_task(
 
     options = (
         {
-            "engine": Engine(engine) if engine else Engine.bqat,
+            "engine": engine,
+            "fusion": fusion,
         }
         if modality == "face"
         else {}
@@ -1197,10 +1199,10 @@ async def resume_task(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    if (
-        len(
+    if  (
+        log :=
             await request.app.log["tasks"]
-            .find(
+            .find_one_and_update(
                 {
                     "status": {
                         "$in": [
@@ -1211,11 +1213,13 @@ async def resume_task(
                     },
                     "tid": task_id,
                 },
+                {
+                    "$set": {
+                            "logs": [],
+                        },
+                },
             )
-            .to_list(length=None)
-        )
-        > 0
-    ):
+        ):
         background_tasks.add_task(
             run_scan_tasks,
             request.app.scan,

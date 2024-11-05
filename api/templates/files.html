@@ -7,7 +7,8 @@
       }
 
       .highlight {
-        background-color: rgba(214, 214, 214, 0.3);
+        /* background-color: rgba(214, 214, 214, 0.3); */
+        background-color: yellow;
         font-weight: bold;
       }
 
@@ -19,6 +20,25 @@
       .thumbnail:hover {
         transform: scale(2);
       }
+      #pagination-controls {
+        position: fixed; /* Keeps it visible when scrolling */
+        bottom: 20px; /* Distance from the bottom of the viewport */
+        left: 50%; /* Horizontally center */
+        transform: translateX(-50%); /* Offset by 50% of its width to align perfectly center */
+        background-color: rgba(255, 255, 255, 0.8); /* Semi-transparent background for readability */
+        padding: 10px; /* Adds some space around the buttons and text */
+        border-radius: 5px; /* Rounds the corners slightly */
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Adds a subtle shadow to make it stand out */
+        z-index: 1000; /* Ensures the element is on top of other content */
+        display: flex; /* Aligns items in a row */
+        align-items: center; /* Vertically centers the content */
+        justify-content: center; /* Horizontally centers the content */
+        gap: 10px; /* Adds space between the buttons and page info */
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
     </style>
   </head>
   <body>
@@ -27,74 +47,210 @@
       <span style="font-style: italic">{{path}}</span>
     </p>
     <label for="searchbox">Search:</label>
-    <input type="search" id="searchbox" oninput="liveSearch()" />
+    <input type="search" id="searchbox" />
+    <button onclick="liveSearch()">submit</button>
     <p id="result-count"></p>
-    <ul>
-      {% for file in files %}
-      <li class="item">
-        <a href="{{file}}">{{file.split('data/')[1]}}</a><br />
-        {% if file.endswith("/") %} {% else %}
-        <p class="image-size"></p>
-        {% if file.endswith("wav") %}
-        <audio controls>
-          <source src="{{file}}" alt="Sample Audio" type="audio/wav">
-          Your browser does not support the audio element.
-        </audio>
-        {% else %}
-        <img
-          class="thumbnail"
-          src="{{file}}"
-          alt="Sample Image"
-          style="
-            width: 200px;
-            margin: 20px 100px;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2),
-              0 6px 20px 0 rgba(0, 0, 0, 0.19);
-          "
-          loading="lazy"
-        />
-        {% endif %}
-        {% endif %}
-        <hr />
-      </li>
-      {% endfor %}
-    </ul>
+    <div id="data-container">
+      <ul id="item-list">
+        {% for file in files[:20] %} 
+        <li class="item" style="display: none;"> 
+          {% set split_signal = 'data/' %}
+          {% set index = file.find(split_signal) %}
+          {% if index != -1 %}
+          {% set result = file[index + split_signal|length:] %}
+            <a href="{{ file }}">{{ result }}</a><br />
+          {% else %}
+            <a href="{{ file }}">{{ file }}</a><br /> {# Fallback to showing the full URL if 'data/' is not found #}
+          {% endif %}
+          {% if file.endswith("/") %} {% else %}
+          <p class="image-size"></p>
+          {% if file.endswith("wav") %}
+          <audio controls>
+            <source src="{{file}}" alt="Sample Audio" type="audio/wav">
+            Your browser does not support the audio element.
+          </audio>
+          {% else %}
+          <img
+            class="thumbnail"
+            src="{{file}}"
+            alt="Sample Image"
+            style="
+              width: 200px;
+              margin: 20px 100px;
+              border-radius: 8px;
+              box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2),
+                0 6px 20px 0 rgba(0, 0, 0, 0.19);
+            "
+            loading="lazy"
+          />
 
+          {% endif %}
+          {% endif %}
+          <hr />
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    <!-- <div id="pagination-controls">
+      <button id="load-more" onclick="loadMoreItems()">Load More Items</button>
+      <span id="page-info"></span>
+    </div> -->
+    <div id="pagination-controls">
+      <button id="first-page" onclick="goToFirstPage()" disabled>First</button>
+      <button id="prev-page" onclick="prevPage()" disabled>Previous</button>
+        <span id="page-info"></span>
+      <button id="next-page" onclick="nextPage()">Next</button>
+      <button id="last-page" onclick="goToLastPage()">Last</button>
+    </div>
     <script>
-      const images = document.querySelectorAll(".thumbnail");
-      const imageSizes = document.querySelectorAll(".image-size");
-
-      images.forEach((image, index) => {
-        image.onload = () => {
-          const width = image.naturalWidth;
-          const height = image.naturalHeight;
-          imageSizes[index].textContent = `size: ${width} x ${height}`;
-        };
-      });
+      const itemsPerPage = 20; // Increase to 20 items per page
+      let currentPage = 1; // Track the current page
+      let allItems = {{ files | safe }}; // Array holding all items from server
+      let displayedItems = []; // Array to track displayed items
+      let searchResults = allItems; // To store the search results
 
       function liveSearch() {
+        const searchQuery = document.getElementById("searchbox").value.toLowerCase();
+        if (!searchQuery) {
+          // If the search box is cleared, reload the default paginated view
+          document.querySelector("#data-container ul").innerHTML = "";
+          currentPage = 1;
+          // loadMoreItems();
+          searchResults = allItems; // Clear search results
+          loadPageItems()
+          document.getElementById("result-count").textContent = ``;
+          return;
+        }
         let count = 0;
-        const items = document.querySelectorAll(".item");
-        const searchQuery = document
-          .getElementById("searchbox")
-          .value.toLowerCase();
+        currentPage = 1;
+        searchResults = []; // Clear search results
 
-        for (let i = 0; i < items.length; i++) {
-          if (items[i].innerText.toLowerCase().includes(searchQuery)) {
-            items[i].classList.remove("is-hidden");
-            items[i].classList.add("highlight");
+        let i=allItems.length;
+        while(i--){
+          if (allItems[i].toLowerCase().includes(searchQuery)) {
+            searchResults.push(allItems[i]);
             count++;
-          } else {
-            items[i].classList.add("is-hidden");
-            items[i].classList.remove("highlight");
+          }
+        }
+        document.getElementById("result-count").textContent = `Found ${count} matching item(s).`;
+        loadPageItems() 
+
+      }
+
+
+      function loadPageItems() {
+        const start = (currentPage-1) * itemsPerPage;
+        const end = Math.min(start + itemsPerPage, searchResults.length);
+
+        const dataContainer = document.querySelector("#data-container ul");
+        dataContainer.innerHTML = ""; // Clear current displayed items
+        const searchQuery = document.getElementById("searchbox").value.toLowerCase();
+        // Loop through items for the current page
+        for (let i = start; i < end; i++) {
+          const item = searchResults[i];
+          const listItem = document.createElement('li');
+          listItem.className = 'item';
+          if (item.endsWith('/')) {
+              continue;
+          }
+                  // Highlight the relevant parts of the item for display
+          const itemName = item.substring(item.indexOf('data/')); // Extract the item name for display
+          const highlightedItemName = highlightMatch(itemName, searchQuery);
+
+          listItem.innerHTML = `
+            <a href="${item}">${highlightedItemName}</a><br />
+            ${item.endsWith("/") ? "" : `<p class="image-size"></p>`}
+            ${item.endsWith("wav") ? `
+              <audio controls>
+                <source src="${item}" alt="Sample Audio" type="audio/wav">
+                Your browser does not support the audio element.
+              </audio>
+            ` : `
+              <img class="thumbnail" src="${item}" alt="Sample Image" style="
+                width: 200px;
+                margin: 20px 100px;
+                border-radius: 8px;
+                box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2), 0 6px 20px 0 rgba(0, 0, 0, 0.19);
+              " loading="lazy"/>
+            `}
+            <hr />
+          `;
+          dataContainer.appendChild(listItem);
+
+          // If the item is an image, update its size after it's loaded
+          if (!item.endsWith("wav") && !item.endsWith("/")) {
+            const image = listItem.querySelector(".thumbnail");
+            const imageSizeElement = listItem.querySelector(".image-size");
+
+            image.onload = () => {
+              const width = image.naturalWidth;
+              const height = image.naturalHeight;
+              imageSizeElement.textContent = `size: ${width} x ${height}`;
+            };
           }
         }
 
-        document.getElementById(
-          "result-count"
-        ).textContent = `Found ${count} matching item(s).`;
+        // Update the pagination buttons visibility
+        updatePaginationControls();
       }
+
+      function goToFirstPage() {
+        if (currentPage !== 1) {
+          currentPage = 1;
+          loadPageItems(); // Function to load items for the current page
+        }
+      }
+
+      // Function to go to the last page
+      function goToLastPage() {
+        if (currentPage !== Math.ceil(searchResults.length / itemsPerPage)) {
+          currentPage = Math.ceil(searchResults.length / itemsPerPage);
+          loadPageItems(); // Function to load items for the current page
+        }
+      }
+
+      // Function to handle the "Next Page" button
+      function nextPage() {
+        if (currentPage < Math.ceil(searchResults.length / itemsPerPage)) {
+          currentPage++;
+          loadPageItems();
+        }
+      }
+
+      // Function to handle the "Previous Page" button
+      function prevPage() {
+        if (currentPage > 1) {
+          currentPage--;
+          loadPageItems();
+        }
+      }
+
+      
+      function highlightMatch(item, query) {
+          // Create a regex to find the search term in a case-insensitive way
+          const regex = new RegExp(`(${query})`, 'gi');
+          return item.replace(regex, '<span class="highlight">$1</span>');
+      }
+
+      // Function to update the visibility of the pagination buttons
+      function updatePaginationControls() {
+        const totalPages=Math.ceil(searchResults.length / itemsPerPage)
+        document.getElementById("page-info").textContent = `Page ${currentPage} of ${totalPages}`;
+        const prevButton = document.getElementById("prev-page");
+        const nextButton = document.getElementById("next-page");
+
+        // Disable "First" and "Previous" buttons on the first page
+        document.getElementById("first-page").disabled = currentPage === 1;
+        document.getElementById("prev-page").disabled = currentPage === 1;
+
+        // Disable "Next" and "Last" buttons on the last page
+        document.getElementById("next-page").disabled = currentPage === totalPages;
+        document.getElementById("last-page").disabled = currentPage === totalPages;
+      }
+      window.onload = function() {
+        loadPageItems();
+      };
     </script>
+
   </body>
 </html>
