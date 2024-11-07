@@ -39,11 +39,6 @@ services:
     shm_size: 8gb
     ports:
       - 8848:8848
-    healthcheck:
-      test: curl --fail -s http://localhost:8848/info || sleep 45 && curl --fail -s http://localhost:8848/info || sleep 45 && curl --fail -s http://localhost:8848/info || kill 1
-      interval: 3m
-      timeout: 3m
-      retries: 5
     depends_on:
       - mongo
       - redis
