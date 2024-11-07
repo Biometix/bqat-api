@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Union
 from uuid import UUID
 
+import pymongo
 import ray
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
@@ -65,6 +66,9 @@ async def get_all_task_logs(request: Request) -> list:
                         "logs": 1,
                     },
                 },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
+                },
             ]
         )
         .to_list(length=None)
@@ -98,6 +102,9 @@ async def get_all_report_logs(request: Request) -> list:
                         "logs": 1,
                     },
                 },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
+                },
             ]
         )
         .to_list(length=None)
@@ -126,6 +133,9 @@ async def get_all_outlier_logs(request: Request) -> list:
                         "modified": 1,
                         "logs": 1,
                     },
+                },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
                 },
             ]
         )
@@ -157,6 +167,9 @@ async def get_all_preprocessing_logs(request: Request) -> list:
                         "input_format": 1,
                         "logs": 1,
                     },
+                },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
                 },
             ]
         )
