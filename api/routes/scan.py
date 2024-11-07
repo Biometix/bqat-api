@@ -1,6 +1,7 @@
 import json
 import os
-import pickle
+
+# import pickle
 import shutil
 import uuid
 from pathlib import Path
@@ -42,7 +43,7 @@ from api.utils import (
     check_options,
     # edit_attributes,
     get_files,
-    get_info,
+    # get_info,
     # get_tag,
     remove_report,
     retrieve_report,
@@ -175,7 +176,8 @@ async def post_remote_task(
     background_tasks: BackgroundTasks,
     files: List[UploadFile],
     modality: Modality,
-    engine: str | None = None,
+    engine: Engine | None = Engine.bqat,
+    fusion: int | None = 6,
     trigger: bool = True,
 ):
     if not modality:
@@ -200,7 +202,8 @@ async def post_remote_task(
 
     options = (
         {
-            "engine": Engine(engine) if engine else Engine.bqat,
+            "engine": engine,
+            "fusion": fusion,
         }
         if modality == "face"
         else {}
@@ -527,11 +530,30 @@ async def delete_log(dataset_id: str, request: Request):
     response_description="All image profiles for this dataset retrieved",
     description="Retrieves all image profiles associated with a specific dataset."
 )
-async def retrieve_all(dataset_id: str, request: Request):
-    profiles = (
-        await request.app.scan[dataset_id].find({}, {"_id": 0}).to_list(length=None)
-    )
-    return profiles
+async def retrieve_all(
+    dataset_id: str,
+    request: Request,
+    skip: int = 0,
+    limit: int = 0,
+):
+    profiles = request.app.scan[dataset_id].find({}, {"_id": 0})
+    if skip:
+        profiles = profiles.skip(skip)
+    if limit:
+        profiles = profiles.limit(limit)
+    return await profiles.to_list(length=None)
+
+
+@router.get(
+    "/{dataset_id}/profiles/count",
+    response_description="Estimate of the number of profiles in this dataset",
+    description="Count the number of profiles in this collection.",
+)
+async def retrieve_all_count(
+    dataset_id: str,
+    request: Request,
+) -> int:
+    return await request.app.scan[dataset_id].estimated_document_count()
 
 
 @router.delete(
@@ -679,15 +701,19 @@ async def detect_outliers(
                 detail=f"failed to retrieve target columns: {str(e)}",
             )
 
-    found = await OutlierDetectionLog.find_one(
+    old_log = await OutlierDetectionLog.find_one(
         OutlierDetectionLog.collection == dataset_id
     )
+    if old_log and old_log.outliers:
+        await request.app.outlier[dataset_id].drop()
+
     log = await OutlierDetectionLog.find_one(
         OutlierDetectionLog.collection == dataset_id
     ).upsert(
         Set(
             {
                 OutlierDetectionLog.options: options,
+                OutlierDetectionLog.outliers: None,
             }
         ),
         on_insert=OutlierDetectionLog(
@@ -697,15 +723,12 @@ async def detect_outliers(
         response_type=UpdateResponse.NEW_DOCUMENT,
     )
 
-    if found and found.outliers:
-        found.outliers = []
-        await found.save()
-
     if trigger:
         background_tasks.add_task(
             run_outlier_detection_tasks,
             request.app.scan,
             request.app.log,
+            request.app.outlier,
             request.app.queue,
             request.app.cache,
             str(log.tid),
@@ -720,19 +743,33 @@ async def detect_outliers(
 @router.get("/{dataset_id}/outliers", response_description="Outliers retrieved",
             description="Retrieves outliers detected for a specific dataset."
 )
-async def get_outliers(dataset_id: str, request: Request):
-    if (
-        logs := await request.app.log["outliers"]
-        .find({"collection": dataset_id}, {"_id": 0})
-        .to_list(length=None)
+async def get_outliers(
+    dataset_id: str,
+    request: Request,
+    with_data: bool = False,
+    skip: int = 0,
+    limit: int = 0,
+):
+    fields = {
+        "_id": 0,
+        "file": 1,
+        "score": 1,
+    }
+    fields.update({"data": 1}) if with_data else fields
+    if outliers := request.app.outlier[dataset_id].find(
+        {},
+        fields,
     ):
-        return [
-            {
-                "file": outlier["file"],
-                "score": outlier["score"],
-            }
-            for outlier in logs[0].get("outliers")
-        ]
+        if skip:
+            outliers = outliers.skip(skip)
+        if limit:
+            outliers = outliers.limit(limit)
+        return await outliers.to_list(length=None)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Outliers of [{dataset_id}] not found",
+        )
 
 
 @router.delete(
@@ -1056,9 +1093,14 @@ async def get_task_status(request: Request):
         )
 
 
-@router.post("/pause", response_description="Task queue paused",description="Pauses and clears all tasks from the task queue."
+@router.post(
+    "/pause",
+    response_description="Task queue paused",
+    description="Pauses and clears all tasks from the task queue.",
 )
 async def pause_queue(request: Request):
+    ray.shutdown()
+
     queue = request.app.queue
     cache = request.app.cache
 
@@ -1067,44 +1109,59 @@ async def pause_queue(request: Request):
         await queue.delete(tid)
     await queue.delete("task_queue")
 
-    cancelled = 0
-    for task in await cache.lrange("task_refs", 0, -1):
-        try:
-            ray.cancel(pickle.loads(task))
-            cancelled += 1
-        except TypeError as e:
-            # print(f"Task not found: {str(e)}")
-            pass
-        except Exception as e:
-            print(f"Failed to cancel ray task: {str(e)}")
+    # cancelled = 0
+    # for task in await cache.lrange("task_refs", 0, -1):
+    #     try:
+    #         ray.cancel(pickle.loads(task))
+    #         cancelled += 1
+    #     except TypeError as e:
+    #         # print(f"Task not found: {str(e)}")
+    #         pass
+    #     except Exception as e:
+    #         print(f"Failed to cancel ray task: {str(e)}")
+    await cache.ltrim("task_refs", 1, 0)
 
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
-        content={"message": f"Successful, task queue paused: {cancelled}"},
+        content={"message": "Successful, task queue paused."},
     )
 
 
-# @router.post("/pause/{task_id}", response_description="Task paused",description="Pauses a specific task identified by its task ID from the task queue."
-# )
-# async def pause_task(
-#     task_id: str,
-#     request: Request,
-# ):
-#     queue = request.app.queue
-#     task_list = []
-#     while await queue.llen("task_queue") > 0:
-#         tid = await queue.rpop("task_queue")
-#         if tid == task_id:
-#             await queue.delete(tid)
-#         else:
-#             task_list.append(tid)
+@router.post(
+    "/pause/{task_id}",
+    response_description="Task paused",
+    description="Pauses a specific task identified by its task ID from the task queue.",
+)
+async def pause_task(
+    task_id: str,
+    request: Request,
+):
+    queue = request.app.queue
+    cache = request.app.cache
 
-#     [await queue.lpush("task_queue", tid) for tid in task_list]
+    ray.shutdown()
+    await cache.ltrim("task_refs", 1, 0)
 
-#     return JSONResponse(
-#         status_code=status.HTTP_202_ACCEPTED,
-#         content={"message": f"Successful, task [{task_id}] paused."},
-#     )
+    task_list = []
+    while await queue.llen("task_queue") > 0:
+        tid = await queue.rpop("task_queue")
+        if tid == task_id:
+            await queue.delete(tid)
+        else:
+            task_list.append(tid)
+
+    [await queue.lpush("task_queue", tid) for tid in task_list]
+
+    if not (log := await TaskLog.find_one(TaskLog.tid == task_id)):
+        raise HTTPException(status_code=404, detail="Task not found!")
+
+    log.status = Status.new
+    await log.save()
+
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"message": f"Successful, task [{task_id}] paused."},
+    )
 
 
 @router.post("/resume", response_description="Task queue resumed",description="Resumes processing tasks in the task queue if there are pending tasks."
@@ -1142,19 +1199,27 @@ async def resume_task(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    if (
-        len(
+    if  (
+        log :=
             await request.app.log["tasks"]
-            .find(
+            .find_one_and_update(
                 {
-                    "status": {"$lt": 2},
+                    "status": {
+                        "$in": [
+                            Status.new,
+                            Status.running,
+                            Status.error,
+                        ]
+                    },
                     "tid": task_id,
                 },
+                {
+                    "$set": {
+                            "logs": [],
+                        },
+                },
             )
-            .to_list(length=None)
-        )
-        > 0
-    ):
+        ):
         background_tasks.add_task(
             run_scan_tasks,
             request.app.scan,
@@ -1188,10 +1253,10 @@ async def clear_task_queue(request: Request):
     )
 
 
-@router.get("/info", response_description="BQAT backend info retrieved",description="Fetches version information."
-)
-async def get_version_info():
-    return JSONResponse(status_code=status.HTTP_200_OK, content=get_info())
+# @router.get("/info", response_description="BQAT backend info retrieved",description="Fetches version information."
+# )
+# async def get_version_info():
+#     return JSONResponse(status_code=status.HTTP_200_OK, content=get_info())
 
 
 @router.post(

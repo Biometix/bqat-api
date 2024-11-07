@@ -16,6 +16,7 @@ services:
 
   server:
     image: ghcr.io/biometix/bqat-api:latest
+    restart: always
     build:
       context: https://github.com/Biometix/bqat-api.git
     shm_size: '8gb'
@@ -25,6 +26,7 @@ services:
       - mongo
       - redis
     environment:
+      PORT: 8848
       MGO_URL: mongodb://mongo:27017/
       RDS_URL: redis://redis:6379/
       DATA: data/

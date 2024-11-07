@@ -10,7 +10,7 @@ pillow = "*"
 fastapi = {extras = ["standard"], version = "*"}
 uvicorn = {extras = ["standard"], version = "*"}
 motor = "*"
-ray = "*"
+ray = {extras = ["default"], version = "*"}
 redis = "*"
 beanie = "*"
 ydata-profiling = "*"

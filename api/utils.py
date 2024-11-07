@@ -3,6 +3,7 @@ import csv
 import glob
 import hashlib
 import json
+import math
 import os
 import pickle
 import re
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
@@ -66,6 +68,7 @@ def scan_task(path, options):
             result = process(path, **options)
             # result.update({"tag": get_tag(result.get("file", path))})
     except Exception as e:
+        traceback.print_exception(e)
         print(f">>>> File scan error: {str(e)}")
         log = {"file": path, "error": str(e)}
         return log
@@ -77,6 +80,7 @@ def report_task(data, options):
     try:
         report = generate_report(data, **options)
     except Exception as e:
+        traceback.print_exception(e)
         print(f">>>> Report generation failed: {str(e)}")
         log = {"options": options, "error": str(e)}
         return log
@@ -88,6 +92,7 @@ def outlier_detection_task(data, options):
     try:
         outliers = get_outliers(data, **options)
     except Exception as e:
+        traceback.print_exception(e)
         print(f">>>> Outlier detection failed: {str(e)}")
         log = {"options": options, "error": str(e)}
         return log
@@ -95,7 +100,7 @@ def outlier_detection_task(data, options):
 
 
 @ray.remote
-def preprocess_task(file: str, output: dir, config: dict) -> None:
+def preprocess_task(file: str, output: str, config: dict) -> None:
     try:
         import wsq
         file = Path(file)
@@ -154,6 +159,13 @@ async def run_scan_tasks(
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     if task_id:
         tasks = await log["tasks"].find({"tid": task_id}).to_list(length=None)
     else:
@@ -211,8 +223,8 @@ async def run_scan_tasks(
                         "[cyan]Executing task...", total=task.get("total", 0)
                     )
                     batch_no = 0
+                    batch_start = time.time()
                     for folder in pending:
-                        batch_start = time.time()
                         batch_no += 1
                         batch_task = [scan_task.remote(folder, options)]
 
@@ -248,19 +260,64 @@ async def run_scan_tasks(
                                 },
                             )
                             await cache.ltrim("task_refs", 1, 0)
-                        except (ray.exceptions.TaskCancelledError, ValueError):
-                            print(f"Task was cancelled: {tid}")
+                        except (
+                            ray.exceptions.TaskCancelledError,
+                            ValueError,
+                            AttributeError,
+                            TypeError,
+                        ):
+                            print(f"Scan task was stopped: {tid}")
                             await log["tasks"].find_one_and_update(
-                                {"tid": task["tid"]},
+                                {"tid": tid},
                                 {
                                     "$set": {
                                         "status": 0,
                                     },
                                 },
                             )
-                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
                             return
+                        except ray.exceptions.OutOfMemoryError:
+                            print(f"Scan task ended: {tid}")
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": "Task was killed due to the node running low on memory.",
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
+                            return
+                        except Exception as e:
+                            print(f"Scan task ended: {tid}")
+                            traceback.print_exception(e)
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": str(e),
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
+                            return
+
                         batch_count = 0
                         for output in outputs:
                             result_list = output.get("results", [])
@@ -284,12 +341,12 @@ async def run_scan_tasks(
                             {"tid": tid},
                             {
                                 "$inc": {
-                                    # "elapse": batch_timer,
+                                    "elapse": int(batch_timer),
                                     "finished": batch_count,
                                 },
-                                "$set": {
-                                    "elapse": time.time() - task_timer,
-                                },
+                                # "$set": {
+                                #     "elapse": time.time() - task_timer,
+                                # },
                             },
                         )
                         await log["datasets"].find_one_and_update(
@@ -313,16 +370,17 @@ async def run_scan_tasks(
                         throughput = 1 if not throughput else throughput
                         eta = (status["total"] - status["done"]) / throughput
                         status["eta"] = int(eta)
-                        print(f">> Finished: {status['done']} / {task.get('total', 1)}")
+                        print(f">> Finished: {status['done']}/{task.get('total', 1)}")
                         print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
                         print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
                         await queue.set(tid, json.dumps(status))
 
-                        shutil.rmtree(folder)
+                        # shutil.rmtree(folder)
 
                         if p.finished:
                             break
+                        batch_start = time.time()
 
                 await log["tasks"].find_one_and_update(
                     {"tid": tid},
@@ -423,19 +481,64 @@ async def run_scan_tasks(
                                 ready, not_ready = ray.wait(not_ready, timeout=3)
                                 print(f"{datetime.now()}: processing...")
                             outputs = ray.get(subtasks)
-                        except (ray.exceptions.TaskCancelledError, ValueError):
-                            print(f"Task was cancelled: {tid}")
+                        except (
+                            ray.exceptions.TaskCancelledError,
+                            ValueError,
+                            AttributeError,
+                            TypeError,
+                        ):
+                            print(f"Scan task was stopped: {tid}")
                             await log["tasks"].find_one_and_update(
-                                {"tid": task["tid"]},
+                                {"tid": tid},
                                 {
                                     "$set": {
                                         "status": 0,
                                     },
                                 },
                             )
-                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
                             return
+                        except ray.exceptions.OutOfMemoryError:
+                            print(f"Scan task ended: {tid}")
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": "Task was killed due to the node running low on memory.",
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
+                            return
+                        except Exception as e:
+                            print(f"Scan task ended: {tid}")
+                            traceback.print_exception(e)
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": str(e),
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
+                            return
+
                         for output in outputs:
                             result_list = output.get("results", [])
                             for result in result_list:
@@ -513,6 +616,7 @@ async def run_scan_tasks(
                 await cache.rpush("task_refs", *[pickle.dumps(task) for task in tasks])
 
                 step = Settings().TASK_WAIT_INTERVAL_STEP
+                throughput = step
                 counter = 0
                 gear = 1
                 with Progress(
@@ -521,8 +625,8 @@ async def run_scan_tasks(
                     *Progress.get_default_columns(),
                 ) as p:
                     task_progress = p.add_task("[cyan]Scanning...", total=len(pending))
+                    scan_start = time.time()
                     while not p.finished:
-                        scan_timer = time.time()
                         await asyncio.sleep(Settings().TASK_WAIT_INTERVAL_SLEEP)
                         try:
                             if len(tasks) < step:
@@ -544,27 +648,81 @@ async def run_scan_tasks(
                                     step -= int(0.2 * step)
                                 results = ray.get(ready)
                                 if len(results) < step:
-                                    step -= len(results)
-                                    gear = 1
+                                    step = len(results)
+                                    gear /= 2
                                 else:
-                                    step += int(0.2 * gear * step)
+                                    step = int(
+                                        gear
+                                        * (
+                                            throughput
+                                            * (
+                                                Settings().TASK_WAIT_INTERVAL_TIMEOUT
+                                                + Settings().TASK_WAIT_INTERVAL_SLEEP
+                                            )
+                                        )
+                                    )
                                     gear += 1
                                 if step < 1:
-                                    gear = 1
                                     step = 1
-                        except (ray.exceptions.TaskCancelledError, ValueError):
-                            print(f"Task was cancelled: {tid}")
+                                    gear = 1
+                        except (
+                            ray.exceptions.TaskCancelledError,
+                            ValueError,
+                            AttributeError,
+                            TypeError,
+                        ):
+                            print(f"Scan task was stopped: {tid}")
                             await log["tasks"].find_one_and_update(
-                                {"tid": task["tid"]},
+                                {"tid": tid},
                                 {
                                     "$set": {
                                         "status": 0,
                                     },
                                 },
                             )
-                            await cache.ltrim("task_refs", 1, 0)
+                            await queue.rpop("task_queue")
                             await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
                             return
+                        except ray.exceptions.OutOfMemoryError:
+                            print(f"Scan task ended: {tid}")
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": "Task was killed due to the node running low on memory.",
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
+                            return
+                        except Exception as e:
+                            print(f"Scan task ended: {tid}")
+                            traceback.print_exception(e)
+                            await log["tasks"].find_one_and_update(
+                                {"tid": tid},
+                                {
+                                    "$set": {
+                                        "status": 3,
+                                    },
+                                    "$push": {
+                                        "logs": str(e),
+                                    },
+                                },
+                            )
+                            await queue.rpop("task_queue")
+                            await queue.delete(tid)
+                            await cache.ltrim("task_refs", 1, 0)
+                            ray.shutdown()
+                            return
+
                         if not results:
                             break
                         counter += len(ready)
@@ -588,18 +746,19 @@ async def run_scan_tasks(
                             ]
                         )
 
-                        scan_timer = time.time() - scan_timer
+                        scan_timer = time.time() - scan_start
+                        scan_start = time.time()
                         p.update(task_progress, advance=len(files))
                         task = await log["tasks"].find_one_and_update(
                             {"tid": tid},
                             {
                                 "$inc": {
-                                    # "elapse": scan_timer,
+                                    "elapse": int(scan_timer),
                                     "finished": len(files),
                                 },
-                                "$set": {
-                                    "elapse": time.time() - task_timer,
-                                },
+                                # "$set": {
+                                #     "elapse": time.time() - task_timer,
+                                # },
                             },
                         )
                         await log["datasets"].find_one_and_update(
@@ -617,7 +776,7 @@ async def run_scan_tasks(
                         throughput = status["done"] / elapse
                         eta = (status["total"] - status["done"]) / throughput
                         status["eta"] = int(eta)
-                        print(f">> Finished: {counter}/{status.get('total', 1)}")
+                        print(f">> Finished: {status["done"]}/{status.get('total', 1)}")
                         print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
                         print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
@@ -643,21 +802,27 @@ async def run_scan_tasks(
                 await queue.rpop("task_queue")
                 await queue.delete(tid)
                 await log["samples"].delete_many({"tid": tid})
-            if options.get("temp"):
-                shutil.rmtree(task.get("input"))
 
             task_timer = time.time() - task_timer
             print(f">> File count: {file_count}")
             print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
             print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
             print(f">> Output: {collection}")
-    except Exception as e:
-        print(f"Task ended: {e}")
 
-    temp_folder = Path(Settings().TEMP) / f"{tid}"
-    if temp_folder.exists():
-        shutil.rmtree(temp_folder)
+            # Clean up temporary files
+            if options.get("temp"):
+                temp_folder = Path(task.get("input"))
+            else:
+                temp_folder = Path(Settings().TEMP) / f"{tid}"
+            if temp_folder.exists():
+                shutil.rmtree(temp_folder)
+                print("> Temporary folder removed.")
+    except Exception as e:
+        traceback.print_exception(e)
+        print(f"> Task ended:\n---\n{str(e)}\n---")
+
     print(">>> Finished <<<\n")
+    ray.shutdown()
 
 
 async def run_report_tasks(
@@ -667,6 +832,13 @@ async def run_report_tasks(
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     tasks = []
     if not task_id:
         for task in await log["reports"].find().to_list(length=None):
@@ -679,7 +851,7 @@ async def run_report_tasks(
         tid = str(task.get("tid"))
         await queue.lpush("task_queue", tid)
 
-    for task in tasks:
+    while await queue.llen("task_queue") > 0:
         task_timer = time.time()
         data = []
 
@@ -710,6 +882,10 @@ async def run_report_tasks(
 
         print(f">> Generate report: {dataset_id}")
 
+        tid = task["tid"]
+        if not await queue.exists(tid):
+            await queue.set(tid, TaskQueue(total=1, eta=-1).model_dump_json())
+
         options = task.get("options")
         options.update({"collection": dataset_id})
         if not external:
@@ -737,18 +913,59 @@ async def run_report_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             html_content = ray.get(ready[0])
-        except ray.exceptions.TaskCancelledError:
-            print(f"Task was cancelled: {task['tid']}")
+        except (
+            ray.exceptions.TaskCancelledError,
+            ValueError,
+            AttributeError,
+            TypeError,
+        ):
+            print(f"Reporting task was cancelled: {tid}")
+            await log["reports"].find_one_and_delete(
+                {"tid": tid},
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
+            ray.shutdown()
+            return
+        except ray.exceptions.OutOfMemoryError:
+            print(f"Reporting task ended: {tid}")
             await log["reports"].find_one_and_update(
-                {"tid": task["tid"]},
+                {"tid": tid},
                 {
                     "$set": {
-                        "status": 0,
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": "Task was killed due to the node running low on memory.",
                     },
                 },
             )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
             await cache.ltrim("task_refs", 1, 0)
+            ray.shutdown()
             return
+        except Exception as e:
+            print(f"Reporting task ended: {tid}")
+            traceback.print_exception(e)
+            await log["reports"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": str(e),
+                    },
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            await cache.rpop("task_refs")
+            ray.shutdown()
+            return
+
         fs = AsyncIOMotorGridFSBucket(log)
 
         filename = f"report_{dataset_id}.html"
@@ -774,6 +991,7 @@ async def run_report_tasks(
         )
         await cache.ltrim("task_refs", 1, 0)
         await queue.rpop("task_queue")
+        await queue.delete(tid)
 
         task_timer = time.time() - task_timer
         print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
@@ -783,10 +1001,18 @@ async def run_report_tasks(
 async def run_outlier_detection_tasks(
     scan: AsyncIOMotorDatabase,
     log: AsyncIOMotorDatabase,
+    outlier: AsyncIOMotorDatabase,
     queue: Redis,
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     if task_id:
         tasks = [await log["outliers"].find_one({"tid": task_id})]
     else:
@@ -808,16 +1034,92 @@ async def run_outlier_detection_tasks(
         task = await log["outliers"].find_one({"tid": tid})
         dataset_id = task.get("collection")
         options = task.get("options")
+        ods = []
+        if not await queue.exists(tid):
+            await queue.set(tid, TaskQueue(total=1, eta=-1).model_dump_json())
 
-        for doc in (
-            await scan[dataset_id].find().to_list(length=None)
-        ):  # TODO instead of reconstruct a dict list, make the query with required attributes
-            sample = {k: float(doc.get(k, 0)) for k in options.get("columns")}
-            data.append(sample)
-            file.append(doc.get("file"))
+        for doc in await scan[dataset_id].find().to_list(length=None):
+            # TODO instead of reconstruct a dict list, make the query with required columns
+            sample = {}
+            info = []
+            for c in options.get("columns", []):
+                if c not in doc.keys():
+                    continue
+                try:
+                    if not math.isnan(value := float(doc.get(c))):
+                        sample.update({c: value})
+                except Exception as e:
+                    info.append({c: doc.get(c), "error": str(e)})
+            if info:
+                ods.append(
+                    {
+                        "file": doc.get("file"),
+                        "score": -1,
+                        "info": info,
+                        "data": {
+                            key: (str(value) if np.isnan(value) else value)
+                            for key, value in sample.items()
+                        },
+                    }
+                )
+            elif sample:
+                data.append(sample)
+                file.append(doc.get("file"))
+            else:
+                ods.append(
+                    {
+                        "file": doc.get("file"),
+                        "score": -1,
+                        "info": [{"error": "no valid data"}],
+                        "data": None,
+                    }
+                )
+
+        data = (pd.DataFrame.from_records(data)).to_dict("records")
+        tmp_data = []
+        tmp_file = []
+        for f, d in zip(file, data):
+            if any(math.isnan(v) for v in d.values()):
+                item = {
+                    "file": f,
+                    "score": -1,
+                    "info": [{"error": "missing values detected"}],
+                    "data": {
+                        key: (str(value) if np.isnan(value) else value)
+                        for key, value in d.items()
+                    },
+                }
+                ods.append(item)
+            else:
+                tmp_data.append(d)
+                tmp_file.append(f)
+        data = tmp_data
+        file = tmp_file
+
+        if not data:
+            await log["outliers"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "outliers": None,
+                        "modified": datetime.now(),
+                        "status": 2,
+                    },
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            print(">> No data sent throuhgh")
+            continue
 
         tasks = [
-            outlier_detection_task.remote(data, {"detector": options.get("detector")})
+            outlier_detection_task.remote(
+                data,
+                {
+                    "detector": options.get("detector"),
+                    "contamination": options.get("contamination"),
+                },
+            )
         ]
 
         await log["outliers"].find_one_and_update(
@@ -835,34 +1137,84 @@ async def run_outlier_detection_tasks(
                 await asyncio.sleep(10)
                 ready, not_ready = ray.wait(not_ready, timeout=3)
             label, score = ray.get(ready[0])
-        except ray.exceptions.TaskCancelledError:
-            print(f"Task was cancelled: {tid}")
+        except (
+            ray.exceptions.TaskCancelledError,
+            ValueError,
+            AttributeError,
+            TypeError,
+        ):
+            print(f"Outlier detection task was cancelled: {tid}")
+            await log["outliers"].find_one_and_delete(
+                {"tid": tid},
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
+            ray.shutdown()
+            return
+        except ray.exceptions.OutOfMemoryError:
+            print(f"Outlier detection task ended: {tid}")
             await log["outliers"].find_one_and_update(
                 {"tid": tid},
                 {
                     "$set": {
-                        "status": 0,
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": "Task was killed due to the node running low on memory.",
                     },
                 },
             )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
+            ray.shutdown()
+            return
+        except Exception as e:
+            print(f"Outlier detection task ended: {tid}")
+            traceback.print_exception(e)
+            await log["outliers"].find_one_and_update(
+                {"tid": tid},
+                {
+                    "$set": {
+                        "status": 3,
+                    },
+                    "$push": {
+                        "logs": str(e),
+                    },
+                },
+            )
+            await queue.rpop("task_queue")
+            await queue.delete(tid)
+            await cache.ltrim("task_refs", 1, 0)
+            ray.shutdown()
             return
 
         outliers = pd.DataFrame(
-            list(zip(file, label, score)), columns=["file", "label", "score"]
+            list(zip(file, label, score, data)),
+            columns=[
+                "file",
+                "label",
+                "score",
+                "data",
+            ],
         )
         outliers = outliers[outliers["label"] == 1].drop(["label"], axis=1)
-        outliers["collection"] = dataset_id
+        results = outliers.to_dict("records") + ods
+        inserted = await outlier[dataset_id].insert_many(results)
         await log["outliers"].find_one_and_update(
             {"tid": tid},
             {
                 "$set": {
-                    "outliers": outliers.to_dict("records"),
+                    "outliers": len(inserted.inserted_ids),
                     "modified": datetime.now(),
                     "status": 2,
                 },
             },
         )
         await queue.rpop("task_queue")
+        await queue.delete(tid)
+        await cache.rpop("task_refs")
 
         task_timer = time.time() - task_timer
         print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
@@ -875,6 +1227,13 @@ async def run_preprocessing_tasks(
     cache: Redis,
     task_id: str | None = None,
 ) -> None:
+    if not Settings().DEBUG_MODE:
+        ray.init(
+            configure_logging=True,
+            logging_level="error",
+            log_to_driver=False,
+        )
+
     if task_id:
         tasks = [await log["preprocessings"].find_one({"tid": task_id})]
     else:
@@ -913,7 +1272,7 @@ async def run_preprocessing_tasks(
         if not await queue.exists(tid):
             await queue.set(tid, TaskQueue(total=file_total).model_dump_json())
 
-        output_dir = task.get("source") + "/" + tid
+        output_dir = task.get("source") + f"_{tid[:5]}"
         config = {
             "frac": task["options"].get("scale"),
             "width": task["options"].get("resize"),
@@ -972,17 +1331,57 @@ async def run_preprocessing_tasks(
 
                 try:
                     ready, not_ready = ray.wait(tasks, num_returns=eta_step, timeout=3)
-                except ray.exceptions.TaskCancelledError:
-                    print(f"Task was cancelled: {task['tid']}")
+                except (
+                    ray.exceptions.TaskCancelledError,
+                    ValueError,
+                    AttributeError,
+                    TypeError,
+                ):
+                    print(f"Pre-processing task was cancelled: {tid}")
+                    await log["preprocessings"].find_one_and_delete(
+                        {"tid": tid},
+                    )
+                    await queue.rpop("task_queue")
+                    await queue.delete(tid)
+                    await cache.ltrim("task_refs", 1, 0)
+                    ray.shutdown()
+                    return
+                except ray.exceptions.OutOfMemoryError:
+                    print(f"Pre-processing task ended: {tid}")
                     await log["preprocessings"].find_one_and_update(
                         {"tid": tid},
                         {
                             "$set": {
-                                "status": 0,
+                                "status": 3,
+                            },
+                            "$push": {
+                                "logs": "Task was killed due to the node running low on memory.",
                             },
                         },
                     )
+                    await queue.rpop("task_queue")
+                    await queue.delete(tid)
                     await cache.ltrim("task_refs", 1, 0)
+                    ray.shutdown()
+                    return
+                except Exception as e:
+                    print(f"Pre-processing task ended: {tid}")
+                    traceback.print_exception(e)
+                    await log["preprocessings"].find_one_and_update(
+                        {"tid": tid},
+                        {
+                            "$set": {
+                                "status": 3,
+                            },
+                            "$push": {
+                                "logs": str(e),
+                            },
+                        },
+                    )
+                    await queue.rpop("task_queue")
+                    await queue.delete(tid)
+                    await cache.ltrim("task_refs", 1, 0)
+                    ray.shutdown()
                     return
                 p.update(task_progress, advance=len(ready))
                 counter += len(ready)
@@ -1256,27 +1655,33 @@ def get_tag(identifier):
     return tag.hexdigest()
 
 
-def get_outliers(data: list, detector: str = "ECOD"):
+def get_outliers(
+    data: list,
+    detector: str = "ECOD",
+    contamination: float = 0.05,
+):
+    workers = -1 if len(data[0]) > 1 else 1
+
     match detector:
         case "ECOD":
-            clf = ECOD(n_jobs=-1)
+            clf = ECOD(n_jobs=workers, contamination=contamination)
         case "CBLOF":
-            clf = CBLOF(n_jobs=-1)
+            clf = CBLOF(n_jobs=workers, contamination=contamination)
         case "IForest":
-            clf = IForest(n_jobs=-1)
+            clf = IForest(n_jobs=workers, contamination=contamination)
         case "KNN":
-            clf = KNN(n_jobs=-1)
+            clf = KNN(n_jobs=workers, contamination=contamination)
         case "COPOD":
-            clf = COPOD(n_jobs=-1)
+            clf = COPOD(n_jobs=workers, contamination=contamination)
         case "PCA":
-            clf = PCA()
+            clf = PCA(contamination=contamination)
         # case "DeepSVDD":
         #     clf = DeepSVDD()
         # case "DIF":
         #     clf = DIF()
         case _:
             print(f"detector: {detector} not recognized, fallback to ECOD.")
-            clf = ECOD(n_jobs=-1)
+            clf = ECOD(n_jobs=workers)
 
     clf.fit(pd.DataFrame.from_records(data))
     labels = clf.labels_
@@ -1338,3 +1743,13 @@ def convert_sec_to_hms(seconds: int) -> str:
     t_min, t_sec = divmod(seconds, 60)
     t_hr, t_min = divmod(t_min, 60)
     return f"{int(t_hr)}h{int(t_min)}m{int(t_sec)}s"
+
+
+def ensure_base64_padding(base64_bytes):
+    """Ensure the Base64 byte string has proper padding."""
+    if isinstance(base64_bytes, str):
+        base64_bytes = base64_bytes.encode("utf-8")
+    missing_padding = len(base64_bytes) % 4
+    if missing_padding:
+        base64_bytes += b"=" * (4 - missing_padding)  # Use bytes for padding
+    return base64_bytes

@@ -1,19 +1,24 @@
 import json
-import pickle
+import os
+
+# import pickle
 from pathlib import Path
 from typing import Union
 from uuid import UUID
 
+import pymongo
 import ray
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
+from ray.util.state import list_nodes
 
 from api.config import Settings
 from api.config.models import (
-    # EditTaskLog,
+    EditTaskLog,
     OutlierDetectionLog,
     PreprocessingLog,
     ReportLog,
+    # SampleLog,
     Status,
     TaskLog,
 )
@@ -58,7 +63,11 @@ async def get_all_task_logs(request: Request) -> list:
                         "finished": 1,
                         "elapse": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
+                },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
                 },
             ]
         )
@@ -90,7 +99,11 @@ async def get_all_report_logs(request: Request) -> list:
                         "file_id": 1,
                         "filename": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
+                },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
                 },
             ]
         )
@@ -118,7 +131,11 @@ async def get_all_outlier_logs(request: Request) -> list:
                         "status": 1,
                         "tid": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
+                },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
                 },
             ]
         )
@@ -148,7 +165,11 @@ async def get_all_preprocessing_logs(request: Request) -> list:
                         "source": 1,
                         "target": 1,
                         "input_format": 1,
+                        "logs": 1,
                     },
+                },
+                {
+                    "$sort": {"modified": pymongo.DESCENDING},
                 },
             ]
         )
@@ -182,6 +203,7 @@ async def get_task_log(request: Request, task_id: str) -> list:
                         "finished": 1,
                         "elapse": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -217,6 +239,7 @@ async def get_report_log(request: Request, task_id: str) -> list:
                         "file_id": 1,
                         "filename": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -248,6 +271,7 @@ async def get_outlier_log(request: Request, task_id: str) -> list:
                         "status": 1,
                         "tid": 1,
                         "modified": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -281,6 +305,7 @@ async def get_preprocessing_log(request: Request, task_id: str) -> list:
                         "source": 1,
                         "target": 1,
                         "input_format": 1,
+                        "logs": 1,
                     },
                 },
             ]
@@ -297,20 +322,35 @@ async def get_task_status(
     task_id: UUID,
 ) -> dict:
     rds = request.app.queue
-    if not await rds.exists(str(task_id)):
+    if not (status := await rds.get(str(task_id))):
         raise HTTPException(status_code=404, detail="Task not found!")
-    return json.loads(await rds.get(str(task_id)))
+    if not (log := await TaskLog.find_one(TaskLog.tid == str(task_id))):
+        if not (log := await ReportLog.find_one(ReportLog.tid == str(task_id))):
+            if not (
+                log := await OutlierDetectionLog.find_one(
+                    OutlierDetectionLog.tid == str(task_id)
+                )
+            ):
+                if not (
+                    log := await PreprocessingLog.find_one(
+                        PreprocessingLog.tid == str(task_id)
+                    )
+                ):
+                    raise HTTPException(status_code=404, detail="Task log not found!")
+    if log.status == Status.error:
+        raise HTTPException(status_code=404, detail="Task failed.")
+    return json.loads(status)
 
 
-# @router.put("/{task_id}/", response_description="Task log retrieved")
-# async def update_task_log(task_id: UUID, edit: EditTaskLog) -> TaskLog:
-#     edit = {k: v for k, v in edit.dict().items() if v is not None}
-#     edit_query = {"$set": {field: value for field, value in edit.items()}}
-#     log = await TaskLog.find_one(TaskLog.tid == str(task_id))
-#     if not log:
-#         raise HTTPException(status_code=404, detail="Task log not found!")
-#     await log.update(edit_query)
-#     return log
+@router.put("/{task_id}", response_description="Task log updated")
+async def update_task_log(task_id: UUID, edit: EditTaskLog) -> TaskLog:
+    edit = {k: v for k, v in edit.model_dump().items() if v is not None}
+    edit_query = {"$set": {field: value for field, value in edit.items()}}
+    log = await TaskLog.find_one(TaskLog.tid == str(task_id))
+    if not log:
+        raise HTTPException(status_code=404, detail="Task log not found!")
+    await log.update(edit_query)
+    return log
 
 
 @router.delete(
@@ -427,8 +467,6 @@ async def cancel_task(
 
     if not log:
         raise HTTPException(status_code=404, detail="Task not found!")
-    elif not (task_refs := await cache.lrange("task_refs", 0, -1)):
-        return {"message": "No tasks is running!"}
     else:
         # for task in task_refs:
         #     try:
@@ -489,9 +527,9 @@ async def cancel_all_tasks(
 
 
 @router.get(
-    "/metadata",
-    response_description="Metadata of pending tasks retrieved",
-    description="Returns information about pending tasks.",
+    "/pending",
+    response_description="Log of current pending task retrieved",
+    description="Returns information about current pending task.",
 )
 async def get_pending_tasks():
     if log := await TaskLog.find_one(TaskLog.status == Status.running):
@@ -679,4 +717,73 @@ async def get_input_folders() -> list[str]:
     ]
     ```
     """
-    return [dir.as_posix() for dir in Path(Settings().DATA).rglob("*") if dir.is_dir()]
+    folders = []
+    with os.scandir(Settings().DATA) as data_folder:
+        for entry in data_folder:
+            if entry.is_dir():
+                folders.append(entry.path)
+            if entry.name == "uploaded":
+                folders.extend(
+                    [entry.path for entry in os.scandir(entry) if entry.is_dir()]
+                )
+    return folders
+
+
+@router.get(
+    "/state",
+    response_description="Get task node state",
+)
+async def get_node_status():
+    try:
+        return list_nodes()[0].get("state")
+    except ConnectionError as e:
+        print(f"> Ray engine not running:\n{e}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Ray engine node not running"
+        )
+
+
+@router.post(
+    "/{task_id}/stop",
+    response_description="Stop the running task",
+)
+async def stop_running_task(
+    request: Request,
+    task_id: str,
+    type: str = "scan",
+):
+    ray.shutdown()
+
+    queue = request.app.queue
+    cache = request.app.cache
+    log = request.app.log
+
+    await queue.lrem("task_queue", 1, task_id)
+    await queue.delete(task_id)
+
+    match type:
+        case "scan":
+            log = await TaskLog.find_one(TaskLog.tid == task_id)
+        case "report":
+            log = await ReportLog.find_one(ReportLog.tid == task_id)
+        case "outlier":
+            log = await OutlierDetectionLog.find_one(TaskLog.tid == task_id)
+        case "preprocessing":
+            log = await PreprocessingLog.find_one(TaskLog.tid == task_id)
+        case _:
+            raise HTTPException(status_code=400, detail="Task type not recognised!")
+
+    if not log:
+        raise HTTPException(status_code=404, detail="Task not found!")
+
+    if log.status != Status.running:
+        raise HTTPException(status_code=409, detail="Task is not running.")
+
+    await cache.ltrim("task_refs", 1, 0)
+    log.status = Status.new
+    await log.save()
+
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={"message": f"Successful, task [{str(log.tid)}] stopped."},
+    )

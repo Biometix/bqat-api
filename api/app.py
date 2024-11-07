@@ -1,11 +1,12 @@
-import os
+# import os
 from contextlib import asynccontextmanager
 
 import uvicorn
 from beanie import init_beanie
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+
+# from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
 from redis import asyncio as aioredis
 
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI):
         app.mongodb_client = AsyncIOMotorClient(settings.MGO_URL)
         app.scan = app.mongodb_client[settings.SCAN_DB]
         app.log = app.mongodb_client[settings.LOG_DB]
+        app.outlier = app.mongodb_client[settings.OUTLIER_DB]
         if await app.mongodb_client.server_info():
             print(f"Connect to MongoDB (scan): {app.scan.name}")
         await init_beanie(
@@ -45,6 +47,7 @@ async def lifespan(app: FastAPI):
             ],
         )
         print(f"Connect to MongoDB (log): {app.log.name}")
+        print(f"Connect to MongoDB (outlier): {app.outlier.name}")
     except Exception as e:
         print(f"Failed to connect MongoDB: {str(e)}")
 

@@ -123,11 +123,13 @@ class Detector(Enum):
 class DetectorOptions(BaseModel):
     detector: Detector | None = Detector.ecod
     columns: List[str] | None = None
+    contamination: float = Field(default=0.05, gt=0, lt=1)
 
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
                 "detector": "ECOD",
+                "contamination": 0.1,
                 "columns": [
                     "ipd",
                     "yaw_degree",
@@ -203,13 +205,11 @@ class ScanOptions(BaseModel):
     engine: Union[Engine, None] = None
     source: Union[List[Format], None] = None
     target: Union[Format, None] = None
-    confidence: Union[float, None] = None
+    confidence: Union[float, None] = 0.7
     pattern: Union[str, None] = None
     type: Union[str, None] = None
     batch: Union[int, None] = None
-    # quality: bool = True
-    # head: bool = True
-    # face: bool = True
+    fusion: Union[int, None] = 6
 
 
 class Folder(BaseModel):
@@ -402,6 +402,7 @@ class Status(IntEnum):
     new = 0
     running = 1
     done = 2
+    error = 3
 
 
 class ReportLog(Document):
@@ -414,6 +415,7 @@ class ReportLog(Document):
     filename: Union[str, None] = None
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "reports"
@@ -435,9 +437,10 @@ class OutlierDetectionLog(Document):
     tid: UUID = Field(default_factory=uuid4)
     collection: Union[UUID, str, None]
     options: Union[DetectorOptions, None] = DetectorOptions()
-    outliers: Union[List, None] = []
+    outliers: Union[int, None] = None
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "outliers"
@@ -454,6 +457,7 @@ class OutlierDetectionLog(Document):
                         "pitch_degree",
                         "roll_degree",
                     ],
+                    "contamination": 0.1,
                 }
             }
         }
@@ -468,6 +472,7 @@ class PreprocessingLog(Document):
     options: PreprocessingOptions = PreprocessingOptions()
     modified: datetime = Field(default_factory=datetime.now)
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "preprocessings"
@@ -505,6 +510,7 @@ class TaskLog(Document):
     finished: int = 0
     elapse: float = 0.0
     modified: datetime = Field(default_factory=datetime.now)
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "tasks"
@@ -557,6 +563,7 @@ class CollectionLog(Document):
     created: datetime = Field(default_factory=datetime.now)
     modified: datetime = created
     samples: int = 0
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "datasets"
@@ -580,6 +587,7 @@ class SampleLog(Document):
     collection: str
     path: str
     status: Status = Status.new
+    logs: Union[List[str], None] = []
 
     class Settings:
         name = "samples"
