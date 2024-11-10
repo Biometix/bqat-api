@@ -85,6 +85,7 @@ class Engine(str, Enum):
     bqat = "bqat"
     ofiq = "ofiq"
     biqt = "biqt"
+    fusion = "fusion"
 
 
 class Format(str, Enum):

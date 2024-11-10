@@ -201,7 +201,10 @@ async def run_scan_tasks(
                     await CollectionLog(collection=collection, options=options).create()
 
             # Split folder scan
-            if options.get("engine") == "ofiq" and options.get("type") != "folder":
+            if (
+                options.get("engine") in ("ofiq", "fusion")
+                and options.get("type") != "folder"
+            ):
                 pending = [
                     sample["path"]
                     for sample in await log["samples"]
