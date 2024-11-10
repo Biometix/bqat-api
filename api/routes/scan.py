@@ -120,7 +120,7 @@ async def post_local_task(
         collection=collection, input=input, total=len(files), options=options
     ).create()
 
-    if modality == "face" and options.get("engine") == "ofiq":
+    if modality == "face" and options.get("engine") in ("ofiq", "fusion"):
         temp_folder = Path(Settings().TEMP) / f"{task.tid}"
         if not temp_folder.exists():
             temp_folder.mkdir(parents=True, exist_ok=False)
@@ -225,7 +225,7 @@ async def post_remote_task(
         options=options,
     ).create()
 
-    if modality == "face" and options.get("engine") == "ofiq":
+    if modality == "face" and options.get("engine") in ("ofiq", "fusion"):
         folders = split_input_folder(
             input_folder=str(input),
             temp_folder=str(temp_folder),
