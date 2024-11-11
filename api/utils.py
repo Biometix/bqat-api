@@ -897,6 +897,7 @@ async def run_report_tasks(
                 {
                     "mode": dataset_log["options"].get("mode"),
                     "engine": dataset_log["options"].get("engine"),
+                    "fusion": dataset_log["options"].get("fusion"),
                 }
             )
 
@@ -1580,6 +1581,28 @@ def generate_report(data, **options):
                         descriptions = {item.name: item.value for item in FaceSpecBIQT}
                         metadata = {
                             "description": "Face image dataset, processed by BIQT engine."
+                        }
+                    case "fusion":
+                        descriptions = {}
+                        engines = []
+                        fusion_code = options.get("fusion", 0)
+                        if fusion_code & 4 == 4:
+                            descriptions.update(
+                                {item.name: item.value for item in FaceSpecBQAT}
+                            )
+                            engines.append("BQAT")
+                        if fusion_code & 2 == 2:
+                            descriptions.update(
+                                {item.name: item.value for item in FaceSpecOFIQ}
+                            )
+                            engines.append("OFIQ")
+                        if fusion_code & 1 == 1:
+                            descriptions.update(
+                                {item.name: item.value for item in FaceSpecBIQT}
+                            )
+                            engines.append("BIQT")
+                        metadata = {
+                            "description": f"Folder of face images, processed by fusion engine{' (' + ', '.join(engines) + ')' if engines else ''}."
                         }
                     case _:
                         descriptions = {}
