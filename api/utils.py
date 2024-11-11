@@ -1204,13 +1204,17 @@ async def run_outlier_detection_tasks(
             ],
         )
         outliers = outliers[outliers["label"] == 1].drop(["label"], axis=1)
-        results = outliers.to_dict("records") + ods
-        inserted = await outlier[dataset_id].insert_many(results)
+        if results := outliers.to_dict("records") + ods:
+            inserted = len(
+                (await outlier[dataset_id].insert_many(results)).inserted_ids
+            )
+        else:
+            inserted = 0
         await log["outliers"].find_one_and_update(
             {"tid": tid},
             {
                 "$set": {
-                    "outliers": len(inserted.inserted_ids),
+                    "outliers": inserted,
                     "modified": datetime.now(),
                     "status": 2,
                 },
