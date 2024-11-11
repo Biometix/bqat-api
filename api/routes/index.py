@@ -17,7 +17,16 @@ from fastapi.templating import Jinja2Templates
 from PIL import Image as PILImage
 
 from api.config import Settings
-from api.config.models import ImageRequest
+from api.config.models import (
+    FaceSpecBIQT,
+    FaceSpecBQAT,
+    FaceSpecOFIQ,
+    FingerprintSpecDefault,
+    ImageRequest,
+    IrisSpecDefault,
+    Modality,
+    SpeechSpecDefault,
+)
 from api.utils import ensure_base64_padding, extend, get_info
 
 router = APIRouter()
@@ -216,3 +225,57 @@ async def delete_dataset(
 )
 async def get_version_info():
     return JSONResponse(status_code=status.HTTP_200_OK, content=get_info())
+
+
+@router.get(
+    "/specification",
+    response_description="Output descriptions retrieved",
+    description="Fetches output columns descriptions.",
+)
+async def get_description(modality: Modality, engine: str = "default"):
+    match modality:
+        case Modality.face:
+            match engine:
+                case "bqat" | "default":
+                    return {item.name: item.value for item in FaceSpecBQAT}
+                case "ofiq":
+                    return {item.name: item.value for item in FaceSpecOFIQ}
+                case "biqt":
+                    return {item.name: item.value for item in FaceSpecBIQT}
+                case _:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid engine specified.",
+                    )
+        case Modality.fingerprint:
+            match engine:
+                case "default":
+                    return {item.name: item.value for item in FingerprintSpecDefault}
+                case _:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid engine specified.",
+                    )
+        case Modality.iris:
+            match engine:
+                case "default":
+                    return {item.name: item.value for item in IrisSpecDefault}
+                case _:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid engine specified.",
+                    )
+        case Modality.speech:
+            match engine:
+                case "default":
+                    return {item.name: item.value for item in SpeechSpecDefault}
+                case _:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid engine specified.",
+                    )
+        case _:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid modality specified.",
+            )
