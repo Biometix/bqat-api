@@ -381,6 +381,9 @@ async def run_scan_tasks(
 
                         # shutil.rmtree(folder)
 
+                        if options.get("fusion", 0) & 6 == 6:
+                            ray.shutdown()
+
                         if p.finished:
                             break
                         batch_start = time.time()

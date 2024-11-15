@@ -106,8 +106,10 @@ ENV MPLCONFIGDIR=/app/temp
 # ENV RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 ENV RAY_DISABLE_DOCKER_CPU_WARNING=1
 ENV YDATA_PROFILING_NO_ANALYTICS=True
+ENV YOLO_CONFIG_DIR=/tmp/yolo
 
 COPY bqat/bqat_core/misc/BQAT/haarcascade_smile.xml bqat_core/misc/haarcascade_smile.xml
+COPY bqat/bqat_core/misc/BQAT bqat_core/misc/BQAT/
 COPY bqat/bqat_core/misc/NISQA/conda-lock.yml .
 COPY bqat/bqat_core/misc/NISQA /app/
 COPY bqat/bqat_core/misc/OFIQ /app/OFIQ/
@@ -153,6 +155,8 @@ ARG VER_CORE
 ARG VER_API
 LABEL BQAT.core.version=$VER_CORE
 LABEL BQAT.api.version=$VER_API
+
+HEALTHCHECK --interval=5m --timeout=5m CMD curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || kill -9 1
 
 ENTRYPOINT [ "/bin/bash", "-l", "-c" ]
 CMD [ "python3 -m api" ]
