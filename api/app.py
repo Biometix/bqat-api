@@ -117,4 +117,5 @@ def create_app():
         # workers=os.cpu_count() - 2 if os.cpu_count() > 3 else 1,
         port=settings.PORT,
         reload=settings.DEBUG_MODE,
+        reload_dirs=["/app/api", "/app/bqat", "/app/tests"],
     )

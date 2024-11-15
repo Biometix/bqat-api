@@ -1199,27 +1199,23 @@ async def resume_task(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    if  (
-        log :=
-            await request.app.log["tasks"]
-            .find_one_and_update(
-                {
-                    "status": {
-                        "$in": [
-                            Status.new,
-                            Status.running,
-                            Status.error,
-                        ]
-                    },
-                    "tid": task_id,
-                },
-                {
-                    "$set": {
-                            "logs": [],
-                        },
-                },
-            )
-        ):
+    if _ := await request.app.log["tasks"].find_one_and_update(
+        {
+            "status": {
+                "$in": [
+                    Status.new,
+                    Status.running,
+                    Status.error,
+                ]
+            },
+            "tid": task_id,
+        },
+        {
+            "$set": {
+                "logs": [],
+            },
+        },
+    ):
         background_tasks.add_task(
             run_scan_tasks,
             request.app.scan,
