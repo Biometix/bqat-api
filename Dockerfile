@@ -106,26 +106,19 @@ ENV MPLCONFIGDIR=/app/temp
 # ENV RAY_USE_MULTIPROCESSING_CPU_COUNT=1
 ENV RAY_DISABLE_DOCKER_CPU_WARNING=1
 ENV YDATA_PROFILING_NO_ANALYTICS=True
-ENV YOLO_CONFIG_DIR=/tmp/yolo
+# ENV YOLO_CONFIG_DIR=/tmp/yolo
 
-COPY bqat/bqat_core/misc/BQAT/haarcascade_smile.xml bqat_core/misc/haarcascade_smile.xml
-COPY bqat/bqat_core/misc/BQAT bqat_core/misc/BQAT/
-COPY bqat/bqat_core/misc/NISQA/conda-lock.yml .
-COPY bqat/bqat_core/misc/NISQA /app/
+COPY bqat/bqat_core/misc/BQAT /app/BQAT/
+COPY bqat/bqat_core/misc/NISQA /app/NISQA/
 COPY bqat/bqat_core/misc/OFIQ /app/OFIQ/
 COPY Pipfile /app/
 
 COPY tests /app/tests/
 
-ENV PATH=/app/mamba/bin:${PATH}
-RUN apt update && apt -y install curl ca-certificates libblas-dev liblapack-dev; curl -L -O "https://github.com/conda-forge/miniforge/releases/download/24.7.1-0/Mambaforge-$(uname)-$(uname -m).sh" && \
-    ( echo yes ; echo yes ; echo mamba ; echo yes ) | bash Mambaforge-$(uname)-$(uname -m).sh && \
-    mamba install --channel=conda-forge --name=base conda-lock=1.4 && \
-    conda-lock install --name nisqa conda-lock.yml && \
-    mamba clean -afy && \
-    useradd assessor && chown -R assessor /app && \
+RUN apt update && apt -y install curl ca-certificates libblas-dev liblapack-dev python3-pip libsndfile1; \
     python3 -m pip install pipenv && \
     pipenv lock; \
+    pipenv requirements > requirements.txt; \
     if [ "${DEV}" == "true" ]; \
     then pipenv requirements --dev > requirements.txt; \
     else pipenv requirements > requirements.txt; \
@@ -138,8 +131,6 @@ RUN apt update && apt -y install curl ca-certificates libblas-dev liblapack-dev;
 #     wget https://github.com/serengil/deepface_models/releases/download/v1.0/age_model_weights.h5 -P /root/.deepface/weights/ && \
 #     wget https://github.com/serengil/deepface_models/releases/download/v1.0/gender_model_weights.h5 -P /root/.deepface/weights/ && \
 #     wget https://github.com/serengil/deepface_models/releases/download/v1.0/race_model_single_batch.h5 -P /root/.deepface/weights/
-
-USER assessor
 
 RUN mkdir data
 
@@ -157,6 +148,9 @@ LABEL BQAT.core.version=$VER_CORE
 LABEL BQAT.api.version=$VER_API
 
 HEALTHCHECK --interval=5m --timeout=5m CMD curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || sleep 30 && curl --fail -s http://localhost:8848/info || kill -9 1
+
+# RUN groupadd -r appgroup && useradd -r -g appgroup assessor && chown -R assessor /app && chown -R assessor /usr/local
+# USER assessor
 
 ENTRYPOINT [ "/bin/bash", "-l", "-c" ]
 CMD [ "python3 -m api" ]

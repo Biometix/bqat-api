@@ -3,6 +3,11 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 name = "pypi"
 
+[[source]]
+url = "https://download.pytorch.org/whl/cpu"
+verify_ssl = true
+name = "downloadpytorch"
+
 [packages]
 mediapipe = "*"
 wsq = "*"
@@ -21,6 +26,12 @@ urllib3 = "*"
 pydantic = "*"
 email-validator = "*"
 pydantic-settings = "*"
+librosa = "*"
+torch = {version = "*", index = "downloadpytorch"}
+webcolors = "*"
+scikit-image = "*"
+shapely = "*"
+onnxruntime = "*"
 
 [dev-packages]
 pytest = "*"
