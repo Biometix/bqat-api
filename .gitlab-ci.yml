@@ -106,7 +106,7 @@ container:
   stage: release
   script:
     - git fetch; git checkout bqat-pro
-    - cd bqat; git fetch; git checkout bqat-pro
+    - git submodule update
     - docker build --build-arg Version=$CI_COMMIT_TAG -t "${CI_REGISTRY_IMAGE}:$CI_COMMIT_TAG" -t "${CI_REGISTRY_IMAGE}:latest" -f Dockerfile .
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
