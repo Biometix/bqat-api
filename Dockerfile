@@ -118,7 +118,6 @@ COPY tests /app/tests/
 RUN apt update && apt -y install curl ca-certificates libblas-dev liblapack-dev python3-pip libsndfile1; \
     python3 -m pip install pipenv && \
     pipenv lock; \
-    pipenv requirements > requirements.txt; \
     if [ "${DEV}" == "true" ]; \
     then pipenv requirements --dev > requirements.txt; \
     else pipenv requirements > requirements.txt; \
