@@ -381,8 +381,8 @@ async def run_scan_tasks(
 
                         # shutil.rmtree(folder)
 
-                        if options.get("fusion", 0) & 6 == 6:
-                            ray.shutdown()
+                        # if options.get("fusion", 0) & 6 == 6:
+                        #     ray.shutdown()
 
                         if p.finished:
                             break
@@ -782,7 +782,7 @@ async def run_scan_tasks(
                         throughput = status["done"] / elapse
                         eta = (status["total"] - status["done"]) / throughput
                         status["eta"] = int(eta)
-                        print(f">> Finished: {status["done"]}/{status.get('total', 1)}")
+                        print(f">> Finished: {status['done']}/{status.get('total', 1)}")
                         print(f">> Elapsed: {convert_sec_to_hms(int(elapse))}")
                         print(f">> ETA: {convert_sec_to_hms(int(eta))}")
                         print(f">> Throughput: {throughput:.2f} items/s\n")
