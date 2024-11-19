@@ -105,21 +105,11 @@ release:
 container-pro:
   stage: release
   script:
+    - git fetch origin
     - git checkout baqt-pro
     - docker build --build-arg Version=$CI_COMMIT_TAG -t "${CI_REGISTRY_IMAGE}:$CI_COMMIT_TAG" -t "${CI_REGISTRY_IMAGE}:latest" -f Dockerfile .
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
     - docker push "$CI_REGISTRY_IMAGE:latest"
-  rules:
-    - if: '$CI_COMMIT_TAG =~ /.*pro$/'
-
-release-pro:
-  stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
-  script:
-    - echo "releasing with new version tag"
-  release:
-    tag_name: '$CI_COMMIT_TAG'
-    description: '$CI_COMMIT_TAG'
   rules:
     - if: '$CI_COMMIT_TAG =~ /.*pro$/'
