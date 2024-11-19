@@ -102,7 +102,7 @@ release:
     - !reference [.commit_rules, rules]
     - !reference [.tag_rules, rules]
 
-container-pro:
+container:
   stage: release
   script:
     - git checkout origin/baqt-pro
