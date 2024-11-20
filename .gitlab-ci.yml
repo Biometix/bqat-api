@@ -94,7 +94,7 @@ release:
   stage: release
   image: registry.gitlab.com/gitlab-org/release-cli:latest
   script:
-    - echo "releasing with new version tag"
+    - echo "Package release with new version tag"
   release:
     tag_name: '$CI_COMMIT_TAG'
     description: '$CI_COMMIT_TAG'
@@ -102,22 +102,25 @@ release:
     # - !reference [.commit_rules, rules]
     - !reference [.tag_rules, rules]
 
-auto-build:
+# build-pro:
+#   stage: release
+#   script:
+#     - echo "Build container image using $CI_COMMIT_REF_NAME"
+#     - docker build --build-arg Version=$CI_COMMIT_TAG -t "${CI_REGISTRY_IMAGE}:$CI_COMMIT_TAG" -t "${CI_REGISTRY_IMAGE}:latest" -f Dockerfile .
+#     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+#     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+#     - docker push "$CI_REGISTRY_IMAGE:latest"
+#   rules:
+#     - if: $CI_COMMIT_TAG =~ /.*pro$/
+
+build-default:
   stage: release
   script:
+    - echo "Build container image with $CI_COMMIT_REF_NAME"
     - docker build --build-arg Version=$CI_COMMIT_TAG -t "${CI_REGISTRY_IMAGE}:$CI_COMMIT_TAG" -t "${CI_REGISTRY_IMAGE}:latest" -f Dockerfile .
     - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
     - docker push "$CI_REGISTRY_IMAGE:latest"
   rules:
-    - if: $CI_COMMIT_BRANCH == "bqat-pro" && $CI_COMMIT_TAG =~ /.*pro$/
-
-manual-build:
-  stage: release
-  script:
-    - docker build --build-arg Version=$CI_COMMIT_TAG -t "${CI_REGISTRY_IMAGE}:$CI_COMMIT_TAG" -f Dockerfile .
-    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
-    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
-  rules:
-    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_TAG
+    - if: $CI_COMMIT_TAG
       when: manual
