@@ -164,6 +164,7 @@ async def run_scan_tasks(
             configure_logging=True,
             logging_level="error",
             log_to_driver=False,
+            ignore_reinit_error=True,
         )
 
     if task_id:
@@ -843,6 +844,7 @@ async def run_report_tasks(
             configure_logging=True,
             logging_level="error",
             log_to_driver=False,
+            ignore_reinit_error=True,
         )
 
     tasks = []
@@ -1018,6 +1020,7 @@ async def run_outlier_detection_tasks(
             configure_logging=True,
             logging_level="error",
             log_to_driver=False,
+            ignore_reinit_error=True,
         )
 
     if task_id:
@@ -1243,6 +1246,7 @@ async def run_preprocessing_tasks(
             configure_logging=True,
             logging_level="error",
             log_to_driver=False,
+            ignore_reinit_error=True,
         )
 
     if task_id:
