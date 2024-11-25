@@ -279,3 +279,14 @@ async def get_description(modality: Modality, engine: str = "default"):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid modality specified.",
             )
+
+
+@router.post(
+    "/validate",
+    response_description="Access key validated",
+    description="validate access key.",
+)
+async def validate_access_key(
+    access_key: str = Body(...),
+):
+    return Settings().ACCESSS_KEY.lower() == access_key.lower()
