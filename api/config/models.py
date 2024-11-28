@@ -697,6 +697,7 @@ class FaceSpecBQAT(str, Enum):
     headgear_detection = "Probability of religious headgear detected."
     headgear_detection_black = "Probability of black religious headgear detected."
     colour_temperature = "Estimation of average colour temperature in Kelvin."
+    brightness_uniformity = "Estimation of image brightness uniformity."
 
 
 class FaceSpecOFIQ(str, Enum):
