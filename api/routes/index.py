@@ -124,7 +124,7 @@ async def purge_data(request: Request):
     description="Uploads a dataset as zip file to the server. The dataset is stored in the 'data' folder and can be accessed via the /data route.",
 )
 async def upload_dataset(file: UploadFile):
-    if file.filename.split(".")[1] != "zip":
+    if file.filename.split(".")[-1] != "zip":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Please upload dataset in zip archive file.",
