@@ -1,3 +1,12 @@
+<a name="v1.4.3"></a>
+
+# v1.4.3 (2024-12-05)
+
+## 🚀 Features
+
+- Improve host resources allocation config
+
+
 <a name="v1.4.0"></a>
 
 # v1.4.0 (2024-09-09)

@@ -211,6 +211,72 @@ class ScanOptions(BaseModel):
     type: Union[str, None] = None
     batch: Union[int, None] = None
     fusion: Union[int, None] = 6
+    cpu: Union[float, None] = None
+    # gpu: Union[float, None] = None
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v <= 0:
+            raise ValueError("value must be positive")
+        elif v > 1:
+            raise ValueError("value must be less than 1")
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def type_value_must_legal(cls, v):
+        type_values = ("folder", "file")
+        if not v:
+            return None
+        if v not in type_values:
+            raise ValueError(f"value [{v}] not legal {type_values}.")
+        return v
+
+    @field_validator("batch")
+    @classmethod
+    def batch_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v <= 0:
+            raise ValueError("value must be positive")
+        return v
+
+    @field_validator("fusion")
+    @classmethod
+    def fusion_value_must_legal(cls, v):
+        fusion_values = (3, 5, 6, 7)
+        if not v:
+            return None
+        if v not in fusion_values:
+            raise ValueError(f"value [{v}] not legal {fusion_values}.")
+        return v
+
+    @field_validator("cpu")
+    @classmethod
+    def cpu_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v <= 0:
+            if v == -1:
+                return v
+            raise ValueError("value must be positive")
+        elif v > 1:
+            raise ValueError("value must be less than 1")
+        return v
+
+    # @field_validator("gpu")
+    # @classmethod
+    # def gpu_value_must_legal(cls, v):
+    #     if not v:
+    #         return None
+    #     if v <= 0:
+    #         raise ValueError("value must be positive")
+    #     elif v > 1:
+    #         raise ValueError("value must be less than 1")
+    #     return v
 
 
 class Folder(BaseModel):
@@ -269,18 +335,18 @@ class ScanTask(BaseModel):
 
     @field_validator("input")
     @classmethod
-    def path_must_exist(cls, input):
-        if isinstance(input, str):
-            if not os.path.exists(input):
-                raise ValueError(f"folder '{input}' not exist")
-            if not os.path.isdir(input):
-                raise ValueError(f"path to '{input}' is not a folder")
-            return input
-        elif isinstance(input, List):
-            for v in input:
+    def path_must_exist(cls, v):
+        if isinstance(v, str):
+            if not os.path.exists(v):
+                raise ValueError(f"folder '{v}' not exist")
+            if not os.path.isdir(v):
+                raise ValueError(f"path to '{v}' is not a folder")
+            return v
+        elif isinstance(v, List):
+            for v in v:
                 if not os.path.exists(v):
                     raise ValueError(f"file '{v}' not exist")
-            return input
+            return v
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -343,15 +409,15 @@ class ScanEdit(BaseModel):
     @field_validator("gender")
     @classmethod
     def gender_must_be_legal(cls, v):
-        gender_List = ("Woman", "Man")
-        if v not in gender_List:
+        gender_list = ("Woman", "Man")
+        if v not in gender_list:
             raise ValueError("gender value not found")
         return v
 
     @field_validator("race")
     @classmethod
     def race_must_be_legal(cls, v):
-        race_List = (
+        race_list = (
             "asian",
             "indian",
             "black",
@@ -359,14 +425,14 @@ class ScanEdit(BaseModel):
             "middle eastern",
             "latino hispanic",
         )
-        if v not in race_List:
+        if v not in race_list:
             raise ValueError("race value not found")
         return v
 
     @field_validator("emotion")
     @classmethod
     def emotion_must_be_legal(cls, v):
-        emotion_List = (
+        emotion_list = (
             "angry",
             "disgust",
             "fear",
@@ -375,7 +441,7 @@ class ScanEdit(BaseModel):
             "surprise",
             "neutral",
         )
-        if v not in emotion_List:
+        if v not in emotion_list:
             raise ValueError("emotion value not found")
         return v
 
@@ -641,6 +707,7 @@ class TaskQueue(BaseModel):
 # def ErrorResponseModel(error, code, message):
 #     return {"error": error, "code": code, "message": message}
 
+
 class FaceSpecBQAT(str, Enum):
     ipd = "Inter-pupillary distance."
     face_detection = "Confidence level of face detection."
@@ -671,7 +738,7 @@ class FaceSpecBQAT(str, Enum):
     face_offset_y = "Vertical offset of the face from image centre."
     background_colour_name = "Background colour name."
     background_colour_rgb = "Background colour RGB values."
-    background_colour_uniformity = "Background colour uniformity."
+    background_colour_variance = "Background colour variance."
     hair_coverage = "Coverage ratio of detected hair area to whole face bounding box."
     blur_lap_var = "Laplacian variance of image as an indicator of blurriness."
     blurriness = "Blur effect metric. An estimate strength of perceptual blurriness."
@@ -695,9 +762,13 @@ class FaceSpecBQAT(str, Enum):
     image_height = "Image height in pixels."
     image_width = "Image width in pixels."
     headgear_detection = "Probability of religious headgear detected."
-    headgear_detection_black = "Probability of black religious headgear detected."
+    headgear_detection_dark = "Probability of black religious headgear detected."
     colour_temperature = "Estimation of average colour temperature in Kelvin."
-    brightness_uniformity = "Estimation of image brightness uniformity."
+    brightness_variance = "Estimation of image brightness variance."
+    head_top = "Top border of head location estimation."
+    head_bottom = "Bottom border of head location estimation."
+    head_right = "Right border of head location estimation."
+    head_left = "Left border of head location estimation."
 
 
 class FaceSpecOFIQ(str, Enum):

@@ -72,6 +72,9 @@ async def lifespan(app: FastAPI):
     #     name="data",
     # )
 
+    print(f"CPU reserved per task: {Settings().CPU_NUM_RESERVE_PER_TASK}")
+    print(f"CPU allocated in total: {int(Settings().CPU_PCT_ALLOC_TOTAL*100)}%")
+
     yield
 
     app.mongodb_client.close()
