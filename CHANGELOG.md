@@ -1,3 +1,12 @@
+<a name="v1.4.4"></a>
+
+# v1.4.4 (2025-02-07)
+
+## 🛠️️ Fixes
+
+- Fix beanie pydantic conflict model schema issue
+
+
 <a name="v1.4.3"></a>
 
 # v1.4.3 (2024-12-05)
@@ -39,7 +48,7 @@
 
 - Add container health check logic
 
-## ⚙️ Miscellaneous Tasks
+## 📎 Miscellaneous Tasks
 
 - Migrate to Pydantic V2
 
@@ -47,10 +56,10 @@
 
 # v1.3.0 (2023-12-15)
 
-## 🛠 Fixes
+## 🛠️️ Fixes
 - Resolve test script issue
 
-## ⚙️ Miscellaneous Tasks
+## 📎 Miscellaneous Tasks
 - Rework docker image [#9](https://gitlab.com/biometix/products/biometric-quality-assessment-tool/bqat-api/-/issues/9)
 
 - Rework dockerfile [#9](https://gitlab.com/biometix/products/biometric-quality-assessment-tool/bqat-api/-/issues/9)
@@ -63,7 +72,7 @@
 
 - Update iris engine
 
-## 🛠 Fixes
+## 🛠️️ Fixes
 
 - Fix Python dependency issues
 - Fix endpoint path issues
@@ -84,7 +93,7 @@
 
 - Update report title
 
-## ⚙️ Miscellaneous Tasks
+## 📎 Miscellaneous Tasks
 
 - Update cicd config
 
@@ -107,7 +116,7 @@
 - generate test.sh for testing
 
 
-## 🛠 Fixes
+## 🛠️️ Fixes
 
 - Fix large doc bson
 - Fix progress status logic
@@ -124,7 +133,7 @@
 - Update report storage logic
 
 
-## ⚙️ Miscellaneous Tasks
+## 📎 Miscellaneous Tasks
 
 
 - Initial commit
