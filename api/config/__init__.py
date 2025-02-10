@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 
 class CommonSettings(BaseSettings):
     APP_NAME: str = "BQAT-API"
-    APP_VERSION: str = "1.4.1-beta"
+    APP_VERSION: str = "1.4.4-beta"
     SUMMARY: str = "BQAT-API provides access to BQAT functionalities via web APIs. 🚀"
     DESCRIPTION: str = """
 ## Basic Workflow
