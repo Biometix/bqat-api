@@ -32,6 +32,7 @@ webcolors = "*"
 scikit-image = "*"
 shapely = "*"
 onnxruntime = "*"
+psutil = "*"
 
 [dev-packages]
 pytest = "*"

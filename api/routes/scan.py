@@ -70,7 +70,7 @@ async def post_local_task(
     task: ScanTask = Body(...),
     trigger: bool = True,
 ):
-    task = task.model_dump()
+    task = task.model_dump(exclude_none=True)
     if not modality:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -89,14 +89,17 @@ async def post_local_task(
     if not (options := check_options(options, modality)):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="task options error found",
+            detail=f"task options error: {options}",
         )
 
     # TODO add preprocessing step
 
     input = task.get("input")
     if isinstance(input, str):
-        extension = options.get("source", ("jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav"))
+        extension = options.get(
+            "source",
+            ("jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav"),
+        )
         if extension is None:
             extension = ["jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav"]
         pattern = options.get("pattern")
@@ -117,7 +120,10 @@ async def post_local_task(
         )
 
     task = await TaskLog(
-        collection=collection, input=input, total=len(files), options=options
+        collection=collection,
+        input=input,
+        total=len(files),
+        options=options,
     ).create()
 
     if modality == "face" and options.get("engine") in ("ofiq", "fusion"):

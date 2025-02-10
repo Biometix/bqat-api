@@ -211,6 +211,72 @@ class ScanOptions(BaseModel):
     type: Union[str, None] = None
     batch: Union[int, None] = None
     fusion: Union[int, None] = 6
+    cpu: Union[float, None] = None
+    # gpu: Union[float, None] = None
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v <= 0:
+            raise ValueError("value must be positive")
+        elif v > 1:
+            raise ValueError("value must be less than 1")
+        return v
+
+    @field_validator("type")
+    @classmethod
+    def type_value_must_legal(cls, v):
+        type_values = ("folder", "file")
+        if not v:
+            return None
+        if v not in type_values:
+            raise ValueError(f"value [{v}] not legal {type_values}.")
+        return v
+
+    @field_validator("batch")
+    @classmethod
+    def batch_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v <= 0:
+            raise ValueError("value must be positive")
+        return v
+
+    @field_validator("fusion")
+    @classmethod
+    def fusion_value_must_legal(cls, v):
+        fusion_values = (3, 5, 6, 7)
+        if not v:
+            return None
+        if v not in fusion_values:
+            raise ValueError(f"value [{v}] not legal {fusion_values}.")
+        return v
+
+    @field_validator("cpu")
+    @classmethod
+    def cpu_value_must_legal(cls, v):
+        if not v:
+            return None
+        if v <= 0:
+            if v == -1:
+                return v
+            raise ValueError("value must be positive")
+        elif v > 1:
+            raise ValueError("value must be less than 1")
+        return v
+
+    # @field_validator("gpu")
+    # @classmethod
+    # def gpu_value_must_legal(cls, v):
+    #     if not v:
+    #         return None
+    #     if v <= 0:
+    #         raise ValueError("value must be positive")
+    #     elif v > 1:
+    #         raise ValueError("value must be less than 1")
+    #     return v
 
 
 class Folder(BaseModel):
@@ -269,18 +335,18 @@ class ScanTask(BaseModel):
 
     @field_validator("input")
     @classmethod
-    def path_must_exist(cls, input):
-        if isinstance(input, str):
-            if not os.path.exists(input):
-                raise ValueError(f"folder '{input}' not exist")
-            if not os.path.isdir(input):
-                raise ValueError(f"path to '{input}' is not a folder")
-            return input
-        elif isinstance(input, List):
-            for v in input:
+    def path_must_exist(cls, v):
+        if isinstance(v, str):
+            if not os.path.exists(v):
+                raise ValueError(f"folder '{v}' not exist")
+            if not os.path.isdir(v):
+                raise ValueError(f"path to '{v}' is not a folder")
+            return v
+        elif isinstance(v, List):
+            for v in v:
                 if not os.path.exists(v):
                     raise ValueError(f"file '{v}' not exist")
-            return input
+            return v
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -343,15 +409,15 @@ class ScanEdit(BaseModel):
     @field_validator("gender")
     @classmethod
     def gender_must_be_legal(cls, v):
-        gender_List = ("Woman", "Man")
-        if v not in gender_List:
+        gender_list = ("Woman", "Man")
+        if v not in gender_list:
             raise ValueError("gender value not found")
         return v
 
     @field_validator("race")
     @classmethod
     def race_must_be_legal(cls, v):
-        race_List = (
+        race_list = (
             "asian",
             "indian",
             "black",
@@ -359,14 +425,14 @@ class ScanEdit(BaseModel):
             "middle eastern",
             "latino hispanic",
         )
-        if v not in race_List:
+        if v not in race_list:
             raise ValueError("race value not found")
         return v
 
     @field_validator("emotion")
     @classmethod
     def emotion_must_be_legal(cls, v):
-        emotion_List = (
+        emotion_list = (
             "angry",
             "disgust",
             "fear",
@@ -375,7 +441,7 @@ class ScanEdit(BaseModel):
             "surprise",
             "neutral",
         )
-        if v not in emotion_List:
+        if v not in emotion_list:
             raise ValueError("emotion value not found")
         return v
 
@@ -644,7 +710,7 @@ class TaskQueue(BaseModel):
 
 class FaceSpecBQAT(str, Enum):
     ipd = "Inter-pupillary distance."
-    face_detection = "Confidence level of face dectection (not quality score)."
+    face_detection = "Confidence level of face detection."
     bbox_left = "Left border of the face bounding box coordinates in pixels."
     bbox_right = "Right border of the face bounding box coordinates in pixels."
     bbox_upper = "Upper border of the face bounding box coordinates in pixels."
@@ -663,27 +729,27 @@ class FaceSpecBQAT(str, Enum):
     roll_degree = "Roll in head pose degree."
     smile = "Smile detected or not."
     glasses = "Eyeglasses/Spectacles detected or not."
-    face_ratio = "Ratio of face area to whole image."
+    face_ratio = "Ratio of face area to the whole image."
     brightness = "Average brightness of the image."
     dynamic_range = "Dynamic range of the image."
-    sharpness = "Shaphness of the image."
+    sharpness = "Sharpness of the image."
     contrast = "Contrast of the image."
     face_offset_x = "Horizontal offset of the face from image centre."
     face_offset_y = "Vertical offset of the face from image centre."
     background_colour_name = "Background colour name."
-    background_colour_rgb = "Background colour rgb values."
-    background_uniformity = "Background colour uniformity."
-    hair_coverage = "Ratio of detected hair area to whole face bounding box."
-    blur_lap_var = "Laplacian variance of image as a indicator of blurriness"
-    blurriness = "Blur effect metric. A estimate strength of perceptual blurriness."
+    background_colour_rgb = "Background colour RGB values."
+    background_colour_variance = "Background colour variance."
+    hair_coverage = "Coverage ratio of detected hair area to whole face bounding box."
+    blur_lap_var = "Laplacian variance of image as an indicator of blurriness."
+    blurriness = "Blur effect metric. An estimate strength of perceptual blurriness."
     gaze_right_x = "Right eyeball gazing direction offset percentage horizontal."
     gaze_right_y = "Right eyeball gazing direction offset percentage vertical."
     gaze_left_x = "Left eyeball gazing direction offset percentage horizontal."
     gaze_left_y = "Left eyeball gazing direction offset percentage vertical."
     pupil_colour_right_name = "Right pupil colour name."
-    pupil_colour_right_rgb = "Right pupil colour rgb values."
+    pupil_colour_right_rgb = "Right pupil colour RGB values."
     pupil_colour_left_name = "Left pupil colour name."
-    pupil_colour_left_rgb = "Left pupil colour rgb values."
+    pupil_colour_left_rgb = "Left pupil colour RGB values."
     brisque_quality = "Blind/Referenceless Image Spatial Quality Evaluator (BRISQUE) no-reference image quality score"
     age = "Estimation of age."
     gender = "Estimation of gender."
@@ -693,12 +759,22 @@ class FaceSpecBQAT(str, Enum):
     holograms = "Hologram area detected."
     is_glare = "Glare/Reflection on the image detected or not."
     glares = "Glare area detected."
+    image_height = "Image height in pixels."
+    image_width = "Image width in pixels."
+    headgear_detection = "Probability of religious headgear detected."
+    headgear_detection_dark = "Probability of black religious headgear detected."
+    colour_temperature = "Estimation of average colour temperature in Kelvin."
+    brightness_variance = "Estimation of image brightness variance."
+    head_top = "Top border of head location estimation."
+    head_bottom = "Bottom border of head location estimation."
+    head_right = "Right border of head location estimation."
+    head_left = "Left border of head location estimation."
 
 
 class FaceSpecOFIQ(str, Enum):
     quality = "MagFace-based unified quality score measure."
     background_uniformity = "Gradient-based background uniformity."
-    illumination_uniformity = "Illumination unformity by summing up the minima of the histograms of the left and the right side of the face."
+    illumination_uniformity = "Illumination uniformity by summing up the minima of the histograms of the left and the right side of the face."
     luminance_mean = "Luminance mean measure computed from the luminance histogram."
     luminance_variance = (
         "Luminance variance measure computed from the luminance histogram."
@@ -717,7 +793,7 @@ class FaceSpecOFIQ(str, Enum):
     eyes_visible = "Eyes visibility assessment by measuring the coverage of the eye visibility zone with the result of face occlusion segmentation computed during pre-processing."
     mouth_occlusion_prevention = "Assessment of the absence of mouth occlusion by measuring the coverage of the mouth region from mouth landmarks with the result of face occlusion segmentation computed on pre-processing."
     face_occlusion_prevention = "Assessment of the absence of face occlusion by measuring the coverage of the landmarked region with the result of face occlusion segmentation computed during pre-processing."
-    inter_eye_distance = " 	Inter-eye distance assessment based on computing the Euclidean length of eyes’ centres and multiplication with the secant of the yaw angle computed during pre-processing."
+    inter_eye_distance = "Inter-eye distance assessment based on computing the Euclidean length of eyes centres and multiplication with the secant of the yaw angle computed during pre-processing."
     head_size = "Size of the head based on computing the height of the face computed from facial landmarks with the height of the image."
     leftward_crop_of_the_face_image = "Left of the face image crop."
     rightward_crop_of_the_face_image = "Right of the face image crop."
@@ -727,7 +803,7 @@ class FaceSpecOFIQ(str, Enum):
     head_pose_pitch = "Pose angle pitch frontal alignment based on the 3DDFAV2."
     head_pose_roll = "Pose angle roll frontal alignment based on the 3DDFAV2."
     expression_neutrality = "Expression neutrality estimation based on a fusion of HSEMotion with Efficient-Expression-Neutrality-Estimation."
-    no_head_coverings = "Assessment of the absence of head coverings by counting the pixels being labeled as head covers in the mask output by the face parsing computed during pre-processing."
+    no_head_coverings = "Assessment of the absence of head coverings by counting the pixels being labelled as head covers in the mask output by the face parsing computed during pre-processing."
 
 
 class FaceSpecBIQT(str, Enum):

@@ -13,11 +13,13 @@ import tempfile
 import time
 import traceback
 from datetime import datetime
+from logging import ERROR
 from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
 import pandas as pd
+import psutil
 import ray
 
 # import wsq # Somehow it needs to be imported with in ray function
@@ -58,7 +60,7 @@ from bqat.bqat_core import __name__, __version__
 from bqat.bqat_core import scan as process
 
 
-@ray.remote(num_cpus=Settings().CPU_RESERVE_PER_TASK)
+@ray.remote
 def scan_task(path, options):
     try:
         if options.get("engine") == "ofiq" and options.get("type") == "folder":
@@ -103,9 +105,10 @@ def outlier_detection_task(data, options):
 def preprocess_task(file: str, output: str, config: dict) -> None:
     try:
         import wsq
+
         file = Path(file)
         pattern = config.get("pattern", None)
-        
+
         if pattern and not file.match(f"*{pattern}{file.suffix}"):
             print(f">>>> File {file} does not match pattern {pattern}{file.suffix}")
             return
@@ -140,12 +143,18 @@ def preprocess_task(file: str, output: str, config: dict) -> None:
                 img = img.resize((int(img.width * frac), int(img.height * frac)))
 
             if target := config.get("target", False):
-                processed = Path(output) / file.parent.relative_to(Settings().DATA) / f"{file.stem}.{target}"
+                processed = (
+                    Path(output)
+                    / file.parent.relative_to(Settings().DATA)
+                    / f"{file.stem}.{target}"
+                )
             else:
-                processed = Path(output) / file.parent.relative_to(Settings().DATA) / file.name
+                processed = (
+                    Path(output) / file.parent.relative_to(Settings().DATA) / file.name
+                )
             if not processed.parent.exists():
                 processed.parent.mkdir(parents=True, exist_ok=True)
-            if target=='wsq':
+            if target == "wsq":
                 img = ImageOps.grayscale(img)
             img.save(processed)
     except Exception as e:
@@ -162,7 +171,7 @@ async def run_scan_tasks(
     if not Settings().DEBUG_MODE:
         ray.init(
             configure_logging=True,
-            logging_level="error",
+            logging_level=ERROR,
             log_to_driver=False,
             ignore_reinit_error=True,
         )
@@ -179,7 +188,8 @@ async def run_scan_tasks(
             await queue.set(
                 tid,
                 TaskQueue(
-                    total=task.get("total", 0), done=task.get("finished", 0)
+                    total=task.get("total", 0),
+                    done=task.get("finished", 0),
                 ).model_dump_json(),
             )
 
@@ -200,6 +210,13 @@ async def run_scan_tasks(
             if task.get("status") == Status.new:
                 if not await log["datasets"].find_one({"collection": collection}):
                     await CollectionLog(collection=collection, options=options).create()
+
+            cpu = (
+                Settings().CPU_NUM_RESERVE_PER_TASK
+                if Settings().CPU_NUM_RESERVE_PER_TASK > 0
+                else options.get("cpu", 1)
+            )
+            scan_task_optioned = scan_task.options(num_cpus=cpu)
 
             # Split folder scan
             if (
@@ -228,9 +245,15 @@ async def run_scan_tasks(
                     )
                     batch_no = 0
                     batch_start = time.time()
+
                     for folder in pending:
                         batch_no += 1
-                        batch_task = [scan_task.remote(folder, options)]
+                        batch_task = [
+                            scan_task_optioned.remote(
+                                folder,
+                                options,
+                            )
+                        ]
 
                         await log["tasks"].find_one_and_update(
                             {"tid": tid},
@@ -453,7 +476,7 @@ async def run_scan_tasks(
                             "[purple]Sending...", total=file_total
                         )
                         subtasks.append(
-                            scan_task.remote(
+                            scan_task_optioned.remote(
                                 input_folder,
                                 options,
                             )
@@ -594,7 +617,7 @@ async def run_scan_tasks(
                     .to_list(length=None)
                 ]
 
-                task = await log["tasks"].find_one_and_update(
+                _ = await log["tasks"].find_one_and_update(
                     {"tid": tid}, {"$set": {"status": 1}}
                 )
                 with Progress(
@@ -606,7 +629,12 @@ async def run_scan_tasks(
                         "[cyan]Sending task...", total=len(pending)
                     )
                     for file in pending:
-                        tasks.append(scan_task.remote(file, options))
+                        tasks.append(
+                            scan_task_optioned.remote(
+                                file,
+                                options,
+                            )
+                        )
                         file_count += 1
                         p.update(task_progress, advance=1)
                         if p.finished:
@@ -826,6 +854,21 @@ async def run_scan_tasks(
                 print("> Temporary folder removed.")
     except Exception as e:
         traceback.print_exception(e)
+        await log["tasks"].find_one_and_update(
+            {"tid": tid},
+            {
+                "$set": {
+                    "status": 3,
+                },
+                "$push": {
+                    "logs": str(e),
+                },
+            },
+        )
+        await queue.rpop("task_queue")
+        await queue.delete(tid)
+        await cache.ltrim("task_refs", 1, 0)
+        ray.shutdown()
         print(f"> Task ended:\n---\n{str(e)}\n---")
 
     print(">>> Finished <<<\n")
@@ -842,7 +885,7 @@ async def run_report_tasks(
     if not Settings().DEBUG_MODE:
         ray.init(
             configure_logging=True,
-            logging_level="error",
+            logging_level=ERROR,
             log_to_driver=False,
             ignore_reinit_error=True,
         )
@@ -862,6 +905,12 @@ async def run_report_tasks(
     while await queue.llen("task_queue") > 0:
         task_timer = time.time()
         data = []
+
+        tid = (await queue.lrange("task_queue", -1, -1))[0]
+        if not tid:
+            continue
+        await queue.lrem("task_queue", 1, tid)
+        task = await log["reports"].find_one({"tid": tid})
 
         if isinstance(task.get("external_input"), str):
             external = True
@@ -890,7 +939,6 @@ async def run_report_tasks(
 
         print(f">> Generate report: {dataset_id}")
 
-        tid = task["tid"]
         if not await queue.exists(tid):
             await queue.set(tid, TaskQueue(total=1, eta=-1).model_dump_json())
 
@@ -1018,7 +1066,7 @@ async def run_outlier_detection_tasks(
     if not Settings().DEBUG_MODE:
         ray.init(
             configure_logging=True,
-            logging_level="error",
+            logging_level=ERROR,
             log_to_driver=False,
             ignore_reinit_error=True,
         )
@@ -1244,7 +1292,7 @@ async def run_preprocessing_tasks(
     if not Settings().DEBUG_MODE:
         ray.init(
             configure_logging=True,
-            logging_level="error",
+            logging_level=ERROR,
             log_to_driver=False,
             ignore_reinit_error=True,
         )
@@ -1338,7 +1386,7 @@ async def run_preprocessing_tasks(
         ) as p:
             task_progress = p.add_task("[cyan]Processing...\n", total=file_total)
             while not p.finished:
-                scan_timer = time.time()
+                # scan_timer = time.time()
                 if len(not_ready) < eta_step:
                     p.update(task_progress, completed=file_total)
                     continue
@@ -1401,7 +1449,7 @@ async def run_preprocessing_tasks(
                 p.update(task_progress, advance=len(ready))
                 counter += len(ready)
 
-                scan_timer = time.time() - scan_timer
+                # scan_timer = time.time() - scan_timer
                 elapse = time.time() - task_timer
                 status = json.loads(await queue.get(tid))
                 status["done"] = counter
@@ -1434,7 +1482,7 @@ async def run_preprocessing_tasks(
         await queue.delete(tid)
 
         print(f">> File count: {file_count}")
-        print(f">> Throughput: {(file_count/task_timer):.2f} items/s")
+        print(f">> Throughput: {(file_count / task_timer):.2f} items/s")
         print(f">> Process time: {convert_sec_to_hms(int(task_timer))}")
         print(f">> Output: {output_dir}")
     print(">>> Finished <<<")
@@ -1449,7 +1497,7 @@ async def run_test_tasks() -> str:
 
 def get_files(
     folder,
-    ext=["jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav"],
+    ext=("jpg", "jpeg", "png", "bmp", "wsq", "jp2", "wav"),
     pattern=None,
 ) -> list:
     slash = "" if folder.endswith("/") else "/"
@@ -1515,31 +1563,57 @@ def get_md5(filepath):
 
 
 def check_options(options, modality):
-    if not options.get("mode"):
-        options["mode"] = modality
-    if modality == "face":
-        if not options.get("engine"):
-            options["engine"] = "bqat"
-        if options["engine"] == "bqat" and not options.get("confidence"):
-            options["confidence"] = 0.7
-        # elif options["engine"] == "ofiq":
-        #     if not options.get("type"):
-        #         options.update({"type": "folder"})
-        elif options["engine"] == "biqt":
+    try:
+        if not options.get("mode"):
+            options["mode"] = modality
+        if not options.get("cpu"):
+            if (
+                not (0 < Settings().CPU_PCT_ALLOC_TOTAL < 1)
+                or not Settings().CPU_PCT_ALLOC_TOTAL
+            ):
+                if Settings().CPU_NUM_RESERVE_PER_TASK > 0:
+                    cpu = 1 / Settings().CPU_NUM_RESERVE_PER_TASK
+                else:
+                    cpu = 0.8
+            else:
+                if Settings().CPU_NUM_RESERVE_PER_TASK > 0:
+                    cpu = min(
+                        1 / Settings().CPU_NUM_RESERVE_PER_TASK,
+                        Settings().CPU_PCT_ALLOC_TOTAL,
+                    )
+                else:
+                    cpu = Settings().CPU_PCT_ALLOC_TOTAL
+            if cpu > 1:
+                cpu = 1
+            if cpu <= 0:
+                return False
+            options["cpu"] = float(cpu)
+        if modality == "face":
+            if not options.get("engine"):
+                options["engine"] = "bqat"
+            if options["engine"] == "bqat" and not options.get("confidence"):
+                options["confidence"] = 0.7
+            # elif options["engine"] == "ofiq":
+            #     if not options.get("type"):
+            #         options.update({"type": "folder"})
+            elif options["engine"] == "biqt":
+                pass
+        elif modality == "fingerprint":
+            if not options.get("source") or options.get("source") == "default":
+                options["source"] = ["png", "jpg", "jpeg", "bmp", "jp2", "wsq"]
+            if not options.get("target") or options.get("target") == "default":
+                options["target"] = "png"
+        elif modality == "iris":
             pass
-    elif modality == "fingerprint":
-        if not options.get("source") or options.get("source") == "default":
-            options["source"] = ["png", "jpg", "jpeg", "bmp", "jp2", "wsq"]
-        if not options.get("target") or options.get("target") == "default":
-            options["target"] = "png"
-    elif modality == "iris":
-        pass
-    elif modality == "speech":
-        if not options.get("type"):
-            options.update({"type": "folder"})
-        if options.get("type") != "folder":
-            options.update({"type": "folder"})
-    else:
+        elif modality == "speech":
+            if not options.get("type"):
+                options.update({"type": "folder"})
+            if options.get("type") != "folder":
+                options.update({"type": "folder"})
+        else:
+            return False
+    except Exception as e:
+        print(e)
         return False
     return options
 
@@ -1740,7 +1814,7 @@ def split_input_folder(
     input_folder,
     temp_folder,
     batch_size=30,
-    exts=["jpg", "jpeg", "png", "bmp", "wsq", "jp2"],
+    exts=("jpg", "jpeg", "png", "bmp", "wsq", "jp2"),
     pattern="",
 ) -> list:
     if not os.path.isdir(input_folder) or not os.path.isdir(temp_folder):
@@ -1790,3 +1864,48 @@ def ensure_base64_padding(base64_bytes):
     if missing_padding:
         base64_bytes += b"=" * (4 - missing_padding)  # Use bytes for padding
     return base64_bytes
+
+
+def convert_cpu_usage(cpu_usage: float) -> float:
+    """Convert CPU usage to number of cpu cores reserved per task.
+
+    Derive the number of CPU cores reserved per task from the CPU usage cap based on number of logical cores and physical cores.
+
+    Args:
+        cpu_usage: CPU usage cap.
+
+    Returns:
+        Number of CPU cores reserved per task.
+    """
+    try:
+        if Settings().CPU_PCT_ALLOC_TOTAL == -1:
+            cpu_num = 1
+        else:
+            physical = psutil.cpu_count(logical=False)
+            logical = psutil.cpu_count(logical=True)
+            cpu_num = 1 / cpu_usage * logical / physical
+    except Exception as e:
+        print(f"Failed to get CPU count: {e}, falling back to default value '1.2'.")
+        cpu_num = 1.2
+    return cpu_num
+
+
+def convert_cpu_num(cpu_num: float) -> float:
+    """Convert CPU cores reserved per task to usage.
+
+    Convert the number of CPU cores reserved per task to usage.
+
+    Args:
+        cpu_num: Number of CPU cores reserved per task.
+
+    Returns:
+        CPU usage.
+    """
+    try:
+        physical = psutil.cpu_count(logical=False)
+        logical = psutil.cpu_count(logical=True)
+        cpu_usage = logical / cpu_num / physical
+    except Exception as e:
+        print(f"Failed to get CPU usage: {e}, falling back to default value '0.8'.")
+        cpu_usage = 0.8
+    return cpu_usage

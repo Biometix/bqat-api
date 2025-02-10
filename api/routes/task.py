@@ -756,7 +756,7 @@ async def stop_running_task(
 
     queue = request.app.queue
     cache = request.app.cache
-    log = request.app.log
+    # log = request.app.log
 
     await queue.lrem("task_queue", 1, task_id)
     await queue.delete(task_id)

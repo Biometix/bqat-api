@@ -1,11 +1,9 @@
-import os
-
 from pydantic_settings import BaseSettings
 
 
 class CommonSettings(BaseSettings):
     APP_NAME: str = "BQAT-API"
-    APP_VERSION: str = "1.4.0-beta"
+    APP_VERSION: str = "1.4.4-beta"
     SUMMARY: str = "BQAT-API provides access to BQAT functionalities via web APIs. 🚀"
     DESCRIPTION: str = """
 ## Basic Workflow
@@ -63,7 +61,8 @@ class DatabaseSettings(BaseSettings):
 
 class Settings(CommonSettings, ServerSettings, DatabaseSettings):
     DATA: str = "data/"
-    CPU_RESERVE_PER_TASK: float = 1.2
+    CPU_NUM_RESERVE_PER_TASK: float = 1  # CPU core number reserved for each task
+    CPU_PCT_ALLOC_TOTAL: float = 0.8  # CPU percentage allocated for the whole system
     TASK_WAIT_INTERVAL_SLEEP: int = 7  # Sleep time between each task status check
     TASK_WAIT_INTERVAL_TIMEOUT: int = 3  # Timeout for each task status check
     TASK_WAIT_INTERVAL_STEP: int = 30  # Outputs to wait for each task status check

@@ -29,6 +29,8 @@ services:
       PORT: 8848
       MGO_URL: mongodb://mongo:27017/
       RDS_URL: redis://redis:6379/
-      DATA: data/
+      # CPU_NUM_RESERVE_PER_TASK: 1.25
+      # CPU_PCT_ALLOC_TOTAL: 0.8
+
     volumes:
       - ./data:/app/data
